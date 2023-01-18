@@ -225,9 +225,9 @@ for i, (imgs, _) in enumerate(train_loader):
 
 #%% Train both models
 if torch.cuda.is_available():
-    generator.cuda()
-    discriminator.cuda()
-    loss_func.cuda()
+    generator.to(device)
+    discriminator.to(device)
+    loss_func.to(device)
    
 for epoch in range(NUM_EPOCHS):
     for i, (imgs, _) in enumerate(train_loader):
@@ -280,7 +280,7 @@ for epoch in range(NUM_EPOCHS):
         "[Epoch %d/%d] [Batch %d/%d] [D loss: %f] [G loss: %f]" 
         % (epoch,NUM_EPOCHS, i, len(train_loader), d_loss.item(), g_loss.item()))   
     
-    if epoch % 3 == 0:
+    if False:
         checkpoint = {GEN_STATE_DICT : generator.state_dict(), 
                   GEN_OPTIMIZER : optimizer_G.state_dict(),
                   DISC_STATE_DICT : discriminator.state_dict(),
@@ -288,7 +288,10 @@ for epoch in range(NUM_EPOCHS):
         save_checkpoint(checkpoint)
     
     
-    
+#%%
+
+#rand_latent = torch.rand(image.shape[0],LATENT_DIM).cpu()
+rand_latent = torch.rand_like(torch.Tensor(1,100))
     
 #%% gen image 
 generator.to('cpu')
@@ -298,13 +301,8 @@ discriminator.to('cpu')
 with torch.no_grad():
     for image,_ in example_loader:
         f, axarr = plt.subplots(1)
-                
-        rand_latent = torch.rand(image.shape[0],LATENT_DIM).cpu()
-        print(rand_latent.shape)
-        
-        fake_image = generator(rand_latent)
-        
-        #axarr[1].imshow(z[0].cpu())
+
+        fake_image = generator(rand_latent)  
        
         fake_image = fake_image[0].reshape(-1, 28, 28)
         axarr.imshow(fake_image[0].cpu())    
@@ -347,7 +345,7 @@ with torch.no_grad():
         break    
     
 #%%
-
+#TODO: add a check if prediction ~0.5 warn not to save checkpoint
 checkpoint = {GEN_STATE_DICT : generator.state_dict(), 
               GEN_OPTIMIZER : optimizer_G.state_dict(),
               DISC_STATE_DICT : discriminator.state_dict(),
@@ -355,5 +353,5 @@ checkpoint = {GEN_STATE_DICT : generator.state_dict(),
 save_checkpoint(checkpoint)
 
 #%% 
-load_checkpoint(torch.load("gan_pytorch.pth.tar"))
+load_checkpoint(torch.load("gan_pytorch.pth.tar",map_location=(device)))
 
