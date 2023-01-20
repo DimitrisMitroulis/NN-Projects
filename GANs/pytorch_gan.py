@@ -18,8 +18,9 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 import numpy as np
 import random
+import time
 
-BATCH_SIZE = 256
+BATCH_SIZE = 200
 NUM_WORKERS = 0
 NUM_EPOCHS = 500
 LR = 0.0002
@@ -120,17 +121,17 @@ class Discriminator(nn.Module):
 class Generator(nn.Module):
     def __init__(self):
         super().__init__()
-        self.lin1 = nn.Linear(LATENT_DIM, 7*7*64)  # [n, 256, 7, 7]
-        self.ct1 = nn.ConvTranspose2d(64, 32, 4, stride=2) # [n, 64, 16, 16]
-        self.ct2 = nn.ConvTranspose2d(32, 16, 4, stride=2) # [n, 16, 34, 34]
-        self.conv = nn.Conv2d(16, 1, kernel_size=7)  # [n, 1, 28, 28]
+        self.lin1 = nn.Linear(LATENT_DIM, 7*7*64)  # [100]->[n, 256, 7, 7]
+        self.ct1 = nn.ConvTranspose2d(64, 32, 4, stride=2) # [n, 256, 7, 7]->[n, 64, 16, 16]
+        self.ct2 = nn.ConvTranspose2d(32, 16, 4, stride=2) # [n, 64, 16, 16]->[n, 16, 34, 34]
+        self.conv = nn.Conv2d(16, 1, kernel_size=7)  # [n, 16, 34, 34]-> [n, 1, 28, 28]
     
 
     def forward(self, x):
         # Pass latent space input into linear layer and reshape
         x = self.lin1(x)
         x = F.relu(x)
-        x = x.view(-1, 64, 7, 7)  #256
+        x = x.view(-1, 64, 7, 7)  
         
         # Upsample (transposed conv) 16x16 (64 feature maps)
         x = self.ct1(x)
@@ -230,8 +231,9 @@ if torch.cuda.is_available():
     loss_func.to(device)
    
 for epoch in range(NUM_EPOCHS):
+    st = time.time()
     for i, (imgs, _) in enumerate(train_loader):
-
+       
         # Adversarial ground truths
         valid = Variable(Tensor(imgs.size(0), 1).fill_(1.0), requires_grad=False)
         fake = Variable(Tensor(imgs.size(0), 1).fill_(0.0), requires_grad=False)
@@ -251,9 +253,13 @@ for epoch in range(NUM_EPOCHS):
         # Generate a batch of images
         gen_imgs = generator(z)
 
-        # Loss measures generator's ability to fool the discriminator
-        #pred =.detach()
-        g_loss = loss_func(discriminator(gen_imgs), valid)
+
+        #Pass fake and real images through discriminator        
+        d_fake_pred = discriminator(gen_imgs)
+        d_real_pred = discriminator(real_imgs)
+        
+        #Loss measures generator's ability to fool the discriminator
+        g_loss = loss_func(d_fake_pred, valid)
 
         g_loss.backward()
         optimizer_G.step()
@@ -266,7 +272,7 @@ for epoch in range(NUM_EPOCHS):
 
         # Measure discriminator's ability to classify real from generated samples
         
-        real_loss = loss_func(discriminator(real_imgs), valid)
+        real_loss = loss_func(d_real_pred, valid)
         fake_loss = loss_func(discriminator(gen_imgs.detach()), fake)
         d_loss = (real_loss + fake_loss) / 2
 
@@ -274,11 +280,15 @@ for epoch in range(NUM_EPOCHS):
         optimizer_D.step()
         
         batches_done = epoch * len(train_loader) + i
+        
        
     
     print(
         "[Epoch %d/%d] [Batch %d/%d] [D loss: %f] [G loss: %f]" 
-        % (epoch,NUM_EPOCHS, i, len(train_loader), d_loss.item(), g_loss.item()))   
+        % (epoch,NUM_EPOCHS, i, len(train_loader), d_loss.item(), g_loss.item()))  
+    
+    et = time.time()
+    print(et-st)
     
     if False:
         checkpoint = {GEN_STATE_DICT : generator.state_dict(), 
@@ -301,7 +311,9 @@ discriminator.to('cpu')
 with torch.no_grad():
     for image,_ in example_loader:
         f, axarr = plt.subplots(1)
+        
 
+        
         fake_image = generator(rand_latent)  
        
         fake_image = fake_image[0].reshape(-1, 28, 28)
@@ -315,7 +327,7 @@ generator.to('cpu')
 discriminator.to('cpu')
 with torch.no_grad():
     for image, _ in example_loader:
-        int = random.randint(0, 1)
+        int = 1#random.randint(0, 1)
         f, axarr = plt.subplots(1)
         
        
@@ -355,3 +367,16 @@ save_checkpoint(checkpoint)
 #%% 
 load_checkpoint(torch.load("gan_pytorch.pth.tar",map_location=(device)))
 
+
+
+#%% For test, 
+#what[1] = what the number is supposed to be
+#what[0] = tensor with image
+
+
+for imgs, what in enumerate(example_loader):
+    f, axarr = plt.subplots(1)
+    img = what[0].reshape(-1, 28, 28)
+    axarr.imshow(img[0])
+    print(what[1].item())
+    break
