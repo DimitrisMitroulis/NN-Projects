@@ -12,5 +12,6 @@ GAN.ipynb is used mostly for experimenting
 3. **gan_pytorch.pth.tar** - Checkpoint file for pretrained Generator and Discriminator 
 
 ## 1 and 2 files are based on the following architecture:
-![Image of GAN architecture](/images/GAN.jpg)
+![Image of GAN architecture](images/GAN.jpg)
+
 
