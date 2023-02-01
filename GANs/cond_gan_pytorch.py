@@ -55,6 +55,21 @@ def load_checkpoint(checkpoint):
     optimizer_G.load_state_dict(checkpoint[GEN_OPTIMIZER])
     discriminator.load_state_dict(checkpoint[DISC_STATE_DICT])
     optimizer_D.load_state_dict(checkpoint[DISC_OPTIMIZER])
+       
+#takes input tensor and return a tensor of same size but every element has different value
+def build_fake_labels(old_list):
+   
+    new_list = []
+    
+    for i,x in enumerate(old_list):
+        
+        if (i%10) != x:
+            new_list.append(i%10)
+        else:
+           new_list.append((x.item()+1)%10)
+        
+    return torch.tensor(new_list,dtype=torch.int64)
+    
 
 #%%train data
 #transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
@@ -125,10 +140,7 @@ class Discriminator(nn.Module):
             x = F.relu(self.fc1(x))
             x = F.dropout(x, training=self.training)
             x = self.fc2(x)
-            
     
-        
-        
         
         
         else:
@@ -228,9 +240,14 @@ for epoch in range(NUM_EPOCHS):
         # Adversarial ground truths
         valid = Variable(Tensor(imgs.size(0), 1).fill_(1.0), requires_grad=False)
         fake = Variable(Tensor(imgs.size(0), 1).fill_(0.0), requires_grad=False)
+        
+        # Sample noise as generator input
+        z = Variable(Tensor(np.random.normal(0, 1, (imgs.shape[0],LATENT_DIM))))
 
         # transform to tensor [256,1,28,28]
         real_imgs = Variable(imgs.type(Tensor))
+        fake_labels = build_fake_labels(labels)
+        
 
         # -----------------
         #  Train Generator
@@ -238,19 +255,19 @@ for epoch in range(NUM_EPOCHS):
 
         optimizer_G.zero_grad()
 
-        # Sample noise as generator input
-        z = Variable(Tensor(np.random.normal(0, 1, (imgs.shape[0],LATENT_DIM))))
 
         # Generate a batch of images
-        gen_imgs = generator(z)
+        gen_imgs = generator(z,labels)
 
 
         #Pass fake and real images through discriminator        
-        d_fake_pred = discriminator(gen_imgs)
-        d_real_pred = discriminator(real_imgs)
+        s_r = discriminator(gen_imgs,labels)
+        s_w = discriminator(real_imgs,fake_labels)
+        s_f = discriminator(real_imgs,labels)
+
         
         #Loss measures generator's ability to fool the discriminator
-        g_loss = loss_func(d_fake_pred, valid)
+        g_loss = loss_func(s_f, valid)
 
         g_loss.backward()
         optimizer_G.step()
@@ -263,9 +280,11 @@ for epoch in range(NUM_EPOCHS):
 
         # Measure discriminator's ability to classify real from generated samples
         
-        real_loss = loss_func(d_real_pred, valid)
-        fake_loss = loss_func(discriminator(gen_imgs.detach()), fake)
-        d_loss = (real_loss + fake_loss) / 2
+        sr_loss = loss_func(s_r, valid)
+        sw_loss = loss_func(s_w, fake)
+        sf_loss = loss_func(s_f, fake)
+        
+        d_loss = sr_loss + ((sw_loss+sf_loss) / 2)
 
         d_loss.backward()
         optimizer_D.step()
@@ -436,4 +455,12 @@ with torch.no_grad():
         
         break 
     
+#%%
+
+
+for i, (imgs, labels) in enumerate(train_loader):
     
+    fake_labels = build_fake_labels(labels)
+    
+    
+    break
