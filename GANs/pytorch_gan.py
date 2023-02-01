@@ -88,7 +88,7 @@ train_loader = torch.utils.data.DataLoader(
 )
 
 test_loader = torch.utils.data.DataLoader(
-    test_dataset, batch_size=32, shuffle=False, num_workers=0
+    test_dataset, batch_size=32, shuffle=True, num_workers=0
 )
 
 example_loader = torch.utils.data.DataLoader(
