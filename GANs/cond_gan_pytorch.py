@@ -3,8 +3,8 @@ Created on Tue Jan 17 13:24:23 2023
 
 @author: DIMITRIS
 
-Description: Simple GAN network, meant for educational purposes
-It's working but it isn't training so well
+Description: Conditional GAN Network, for eaducational purposed
+Status: Working, needs some fine-tuning
 """
 
 
@@ -17,12 +17,12 @@ import matplotlib.pyplot as plt
 import torch.nn.functional as F
 from torch.autograd import Variable
 import numpy as np
-import random
 import time
+import random
 import torchvision.utils as vutils
 
 
-NUM_EPOCHS = 500
+NUM_EPOCHS = 50
 LR = 0.0002
 LATENT_DIM = 100
 IMG_SIZE = 28
@@ -41,15 +41,27 @@ PIN_MEMORY = True
 NUM_WORKERS = 0
 BATCH_SIZE = 200
 
+specific_latent = torch.tensor([[0.7628, 0.1779, 0.3978, 0.3606, 0.6387, 0.6101, 0.3726, 0.5399, 0.3057,
+         0.3044, 0.8340, 0.3884, 0.9313, 0.5635, 0.1994, 0.6934, 0.5326, 0.3676,
+         0.5342, 0.9480, 0.4120, 0.5845, 0.4035, 0.5298, 0.0177, 0.5605, 0.6453,
+         0.9576, 0.7153, 0.1923, 0.8122, 0.0937, 0.5744, 0.5951, 0.8890, 0.4838,
+         0.5707, 0.6760, 0.3738, 0.2796, 0.1549, 0.8220, 0.2800, 0.4051, 0.2553,
+         0.1831, 0.0046, 0.9021, 0.0264, 0.2327, 0.8261, 0.0534, 0.1582, 0.4087,
+         0.9047, 0.1409, 0.6864, 0.1439, 0.3432, 0.1072, 0.5907, 0.6756, 0.6942,
+         0.6814, 0.3368, 0.4138, 0.8030, 0.7024, 0.3309, 0.7288, 0.2193, 0.1954,
+         0.9948, 0.1201, 0.9483, 0.7407, 0.4849, 0.6500, 0.8649, 0.7405, 0.4725,
+         0.5373, 0.6541, 0.5444, 0.7425, 0.8940, 0.3580, 0.3905, 0.8924, 0.2995,
+         0.7714, 0.2561, 0.2569, 0.2994, 0.7648, 0.2413, 0.1137, 0.0120, 0.3380,
+         0.8313]])
+
 
 img_shape = (CHANNELS, IMG_SIZE, IMG_SIZE)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print('Device:{}'.format(device))
 
-
 #%% helper funcitons
-def save_checkpoint(state, filename="cond_gan_pytorch.pth.tar"):
+def save_checkpoint(state, filename="cond_gan_pytorch6.pth.tar"):
     print("=> Saving chekpoint")
     torch.save(state, filename)    
 
@@ -72,7 +84,11 @@ def build_fake_labels(old_list):
            new_list.append((x.item()+1)%10)
         
     return torch.tensor(new_list,dtype=torch.int64).to(device)
-    
+
+def add_noise(inputs,variance):
+    noise = torch.randn_like(inputs)
+    return inputs + variance*noise
+
 
 #%%train data
 #transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
@@ -119,8 +135,8 @@ class Discriminator(nn.Module):
         
         self.nconv1 = nn.Conv2d(2, 64, kernel_size=5)
         self.nconv2 = nn.Conv2d(64, 128, kernel_size=5)
-        self.pool = nn.MaxPool2d(kernel_size=3)
-        self.pool2 = nn.MaxPool2d(kernel_size=2)
+        self.pool = nn.AvgPool2d(kernel_size=3)
+        self.pool2 = nn.AvgPool2d(kernel_size=2)
         self.nfc1 = nn.Linear(1152, 164)
         self.nfc2 = nn.Linear(164, 1)
     
@@ -136,23 +152,23 @@ class Discriminator(nn.Module):
             
         if oldWay: 
         
-            x = F.relu(F.max_pool2d(self.conv1(x), 2))
-            x = F.relu(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
+            x = F.leaky_relu(F.max_pool2d(self.conv1(x), 2))
+            x = F.leaky_relu(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
             # Flatten the tensor so it can be fed into the FC layers
             x = x.view(-1, 320)
-            x = F.relu(self.fc1(x))
+            x = F.leaky_relu(self.fc1(x))
             x = F.dropout(x, training=self.training)
             x = self.fc2(x)
     
         
         
         else:
-            x = F.relu(self.nconv1(x))
-            x = F.relu(self.nconv2(x))
+            x = F.leaky_relu(self.nconv1(x))
+            x = F.leaky_relu(self.nconv2(x))
             x = self.pool(x)
             x = self.pool2(x)
             x = x.view(-1, 1152)
-            x = F.relu(self.nfc1(x))
+            x = F.leaky_relu(self.nfc1(x))
             x = F.dropout(x, training=self.training)
             x = self.nfc2(x)
             
@@ -176,13 +192,13 @@ class Generator(nn.Module):
         self.emb = nn.Embedding(10,50) 
         self.label_lin = nn.Linear(50,49)
         self.conv_x_c = nn.ConvTranspose2d(65,64,4,stride=2) # upsample [65,7,7] -> [64,14,14]
-    
+        self.tanh = nn.Tanh()
 
     def forward(self, x ,c ):
         # Pass latent space input into linear layer and reshape
-        x = self.lin1(x) #(n,100) -> (n,3136)
-        x = F.relu(x)
-        x = x.view(-1, 63, 7, 7) # (n,3136) -> (64,7,7)
+        x = self.lin1(x) #(n,100) -> (n,3187)
+        x = F.leaky_relu(x)
+        x = x.view(-1, 63, 7, 7) # (n,3187) -> (63,7,7)
         
         #Encode label
        
@@ -192,25 +208,28 @@ class Generator(nn.Module):
         c = c.view(-1,1,7,7) #(n,49) -> (n,1,7,7)
         
         
-        x = torch.cat((c,x),1) #concat image[64,7,7] with text [1,7,7]
+        x = torch.cat((c,x),1) #concat image[63,7,7] with text [1,7,7]
         #x = self.conv_x_c(x) #[65,7,7] -> [64,16,16]
-        #x = F.relu(x)
+        #x = F.leaky_relu(x)
             
         
         x = self.ct1(x) #[n, 64, 16, 16] [32,34,34]
-        x = F.relu(x)
+        x = F.leaky_relu(x)
         
         
         # Upsample to 34x34 (16 feature maps)
         x = self.ct2(x)
-        x = F.relu(x)
+        x = F.leaky_relu(x)
         
         # Convolution to 28x28 (1 feature map)
-        return self.conv(x)    
+        x = self.tanh(self.conv(x))
+        
+        return x
     
     
-#%% #loss function 
+#%% Loss fucntion, optimizers
 loss_func = nn.BCELoss()
+#d_loss_func = nn.CrossEntropyLoss(label_smoothing=0.2 )
 
 # Initialize generator and discriminator
 generator = Generator().to(device)
@@ -223,6 +242,7 @@ if torch.cuda.is_available():
     
 optimizer_G = torch.optim.Adam(generator.parameters(), lr=LR,betas=(B1 ,B2))
 optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=LR,betas=(B1 ,B2))
+#optimizer_D = torch.optim.SGD(discriminator.parameters(), lr=LR)
    
 Tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor   
 
@@ -269,7 +289,6 @@ for epoch in range(NUM_EPOCHS):
         gen_imgs = generator(z,labels)
         
         # Calculate D's loss on the all-fake batch
-        #s_w = discriminator(real_imgs,fake_labels)
         s_f = discriminator(gen_imgs.detach(),labels.detach())
         sf_loss = loss_func(s_f, fake)
         sf_loss.backward()
@@ -277,15 +296,6 @@ for epoch in range(NUM_EPOCHS):
         
         d_loss = s_f + s_r
         optimizer_D.step()
-        
-       
-        # Measure discriminator's ability to classify real from generated samples
-        #sr_loss = loss_func(s_r, valid)
-        #sw_loss = loss_func(s_w, fake)
-        #sf_loss = loss_func(s_f, fake)
-        
-        #d_loss = sr_loss + ((sw_loss+sf_loss) / 2)
-
         
         # -----------------
         #  Train Generator
@@ -324,23 +334,31 @@ for epoch in range(NUM_EPOCHS):
 generator.to('cpu')
 discriminator.to('cpu')
 
-rand_latent = torch.rand_like(torch.Tensor(1,100))
-caption = 0
+
+randomLatent = True
+caption = -1
+
 with torch.no_grad():
     for image,_ in example_loader:
         f, axarr = plt.subplots(1)
         
-
+        if randomLatent:
+            latent = torch.rand_like(torch.Tensor(1,100))
+        else:
+            latent = specific_latent
+            
+        if caption == -1:
+            caption = random.randint(0, 9)
+        
         caption = torch.tensor(caption, dtype=torch.int64)
-        fake_image = generator(rand_latent,caption)  
+        fake_image = generator(latent,caption)  
        
-        fake_image = fake_image[0].reshape(-1, 28, 28)
-        axarr.imshow(fake_image[0].cpu())    
+        
+        #axarr.imshow(add_noise(image[0][0],0.5))    
+        axarr.imshow(fake_image[0][0])    
         break
     
     
-#%%
-
 
     
 #%% Discriminate image
@@ -350,7 +368,7 @@ discriminator.to('cpu')
 
 with torch.no_grad():
     for  i, (imgs, labels) in enumerate(example_loader):
-        int = 0#random.randint(0, 1)
+        int = random.randint(0, 1)
         f, axarr = plt.subplots(1)
         
         fake_labels = build_fake_labels(labels.to(device))
@@ -373,86 +391,25 @@ with torch.no_grad():
         else:
             axarr.imshow(imgs[0].reshape(-1, 28, 28)[0])
             pred = discriminator(imgs,labels[0])
-            print("Discriminator Prediction: {},Should be: {}, label= {}".format(pred,"1",labels[0]+1))
+            print("Discriminator Prediction: {},Should be: {}, label= {}".format(pred,"1",labels[0]))
         
         
         
         
         
         break    
-#%%
-train_disc(1)
-    
-#%%Train disriminator for x epochs 
+#%%Plot Losses
 
-def train_disc(epochs=100):
-    if torch.cuda.is_available():
-        generator.to(device)
-        discriminator.to(device)
-        loss_func.to(device)
-        
-    for epoch in range(epochs):
-        st = time.time()
-        for i, (imgs,labels) in enumerate(train_loader):
-              
-            
-            # Adversarial ground truths
-            valid = Variable(Tensor(imgs.size(0), 1).fill_(1.0), requires_grad=False)
-            fake = Variable(Tensor(imgs.size(0), 1).fill_(0.0), requires_grad=False)
-            
-            # Sample noise as generator input
-            z = Variable(Tensor(np.random.normal(0, 1, (imgs.shape[0],LATENT_DIM))))
+plt.figure(figsize=(10,5))
+plt.title("Generator and Discriminator Loss During Training")
+plt.plot(G_losses,label="G")
+plt.plot(D_losses,label="D")
+plt.xlabel("iterations")
+plt.ylabel("Loss")
+plt.legend()
+plt.show()
     
-            # transform to tensor [256,1,28,28]
-            real_imgs = Variable(imgs.type(Tensor))
-            fake_labels = build_fake_labels(labels.to(device))
-            
-            labels = labels.to(device)
-            # -----------------
-            #  Train Generator
-            # -----------------
-    
-    
-            # Generate a batch of images
-            gen_imgs = generator(z,labels)
-    
-    
-            #Pass fake and real images through discriminator        
-            s_r = discriminator(gen_imgs,labels)
-            s_w = discriminator(real_imgs,fake_labels)
-            s_f = discriminator(real_imgs,labels)
-            
-            
-            # ---------------------
-            #  Train Discriminator
-            # ---------------------
-            # Measure discriminator's ability to classify real from generated samples
-            optimizer_D.zero_grad()
-            sr_loss = loss_func(s_r, valid)
-            sw_loss = loss_func(s_w, fake)
-            sf_loss = loss_func(s_f, fake)
-            
-            d_loss = (sr_loss + ((sw_loss+sf_loss) / 2))/2
-    
-            d_loss.backward()
-            optimizer_D.step()
-          
-            batches_done = epoch * len(train_loader) + i
-            
-           
-        
-        print(
-            "[Epoch %d/%d] [Batch %d/%d] [D loss: %f] " 
-            % (epoch,NUM_EPOCHS, i, len(train_loader), d_loss.item()))  
-        
-        et = time.time()
-        print(et-st)
-       
-    
-    
-    
-    
-#%%
+#%% Save Model
 #TODO: add a check if prediction ~0.5 warn not to save checkpoint
 checkpoint = {GEN_STATE_DICT : generator.state_dict(), 
               GEN_OPTIMIZER : optimizer_G.state_dict(),
@@ -460,82 +417,7 @@ checkpoint = {GEN_STATE_DICT : generator.state_dict(),
               DISC_OPTIMIZER : optimizer_D.state_dict()}
 save_checkpoint(checkpoint)
 
-#%% 
+#%%  Load Model
 load_checkpoint(torch.load("cond_gan_pytorch.pth.tar",map_location=(device)))
 
 
-
-#%% For test, 
-#what[1] = what the number is supposed to be
-#what[0] = tensor with image
-
-
-for i, (imgs, what) in enumerate(train_loader):
-    f, axarr = plt.subplots(1)
-    img = imgs.reshape(-1, 28, 28)
-    axarr.imshow(img[0])
-    print(what[0].item())
-    break
-
-
-#%%
-
-with torch.no_grad():
-        
-    for i, (imgs, what) in enumerate(train_loader):
-        
-        #conv_concat = nn.ConvTranspose2d(65,64,4,stride=2)
-        #z = Variable(Tensor(np.random.normal(0, 1, (200,LATENT_DIM)))).to("cpu")
-        #lin1 = nn.Linear(100, 7*7*64)  # [n,100]->[n,3136] 
-        #x.to(device)
-        #x = lin1(z)
-        #x = F.relu(x)
-        #x = x.view(-1, 64, 7, 7) # [n,3136] -> [n, 64, 7, 7]
-        #c = emb(what)
-        #c = label_lin(c)
-        #c = c.view(-1,1,7,7)
-        #res = torch.cat((c,x),1)
-        #res = conv_concat(res)
-        
-        x = Variable(imgs.type(Tensor)).to("cpu")
-        
-        
-        nconv1 = nn.Conv2d(2, 64, kernel_size=5)
-        nconv2 = nn.Conv2d(64, 128, kernel_size=5)
-        pool = nn.MaxPool2d(kernel_size=3)
-        pool2 = nn.MaxPool2d(kernel_size=2)
-        nfc1 = nn.Linear(1152, 164)
-        nfc2 = nn.Linear(164, 1)
-    
-                
-        emb = nn.Embedding(10,50) 
-        emb_fc = nn.Linear(50, 784)
-        
-     
-        c = emb(what)
-        c = emb_fc(c)
-        c = c.view(-1,1,28,28)
-        
-        x = torch.cat((c,x),1) #concat image[1,28,28] with text [1,28,28]
-        
-        
-        x = F.relu(nconv1(x))
-        x = F.relu(nconv2(x))
-        x = pool(x)
-        x = pool2(x)
-        x = x.view(-1, 1152)
-        x = F.relu(nfc1(x))
-        x = F.dropout(x, training=True)
-        x = F.relu(nfc2(x))
-        
-        break 
-    
-#%%
-
-
-for i, (imgs, labels) in enumerate(train_loader):
-    
-    fake_labels = build_fake_labels(labels)
-    
-    
-    break
