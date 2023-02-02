@@ -19,6 +19,7 @@ from torch.autograd import Variable
 import numpy as np
 import random
 import time
+import torchvision.utils as vutils
 
 
 NUM_EPOCHS = 500
@@ -26,6 +27,8 @@ LR = 0.0002
 LATENT_DIM = 100
 IMG_SIZE = 28
 CHANNELS = 1
+B1 = 0.5
+B2 = 0.999
 
 GEN_STATE_DICT = "gen_state_dict"
 DISC_STATE_DICT = "disc_state_dict"
@@ -68,7 +71,7 @@ def build_fake_labels(old_list):
         else:
            new_list.append((x.item()+1)%10)
         
-    return torch.tensor(new_list,dtype=torch.int64)
+    return torch.tensor(new_list,dtype=torch.int64).to(device)
     
 
 #%%train data
@@ -123,12 +126,12 @@ class Discriminator(nn.Module):
     
         
   #oldWay flag to select between 2 train methods, not sure which is best yet
-    def forward(self, x, c=1 ,oldWay=True):
+    def forward(self, x, c ,oldWay=False):
         
         
-        c = emb(c)
-        c = emb_fc(c)
-        c.view(-1,28,28)
+        c = self.emb(c)
+        c = self.emb_fc(c)
+        c= c.view(-1,1,28,28)
         x = torch.cat((c,x),1) #concat image[1,28,28] with text [1,28,28]
             
         if oldWay: 
@@ -151,10 +154,11 @@ class Discriminator(nn.Module):
             x = x.view(-1, 1152)
             x = F.relu(self.nfc1(x))
             x = F.dropout(x, training=self.training)
-            x = F.relu(self.nfc2(x))
+            x = self.nfc2(x)
             
         
-        return torch.sigmoid(x)
+        x = torch.sigmoid(x)
+        return x
             
             
         
@@ -164,7 +168,7 @@ class Discriminator(nn.Module):
 class Generator(nn.Module):
     def __init__(self):
         super().__init__()
-        self.lin1 = nn.Linear(LATENT_DIM, 7*7*64)  # [n,100]->[n,3136]
+        self.lin1 = nn.Linear(LATENT_DIM, 7*7*63)  # [n,100]->[n,3087]
         self.ct1 = nn.ConvTranspose2d(64, 32, 4, stride=2) # [n, 64, 16, 16] [32,..,..]
         self.ct2 = nn.ConvTranspose2d(32, 16, 4, stride=2) # [n, 32, , ]->[n, 16, 34, 34]
         self.conv = nn.Conv2d(16, 1, kernel_size=7)  # [n, 16, 34, 34]-> [n, 1, 28, 28]
@@ -174,26 +178,26 @@ class Generator(nn.Module):
         self.conv_x_c = nn.ConvTranspose2d(65,64,4,stride=2) # upsample [65,7,7] -> [64,14,14]
     
 
-    def forward(self, x ,c = -1):
+    def forward(self, x ,c ):
         # Pass latent space input into linear layer and reshape
         x = self.lin1(x) #(n,100) -> (n,3136)
         x = F.relu(x)
-        x = x.view(-1, 64, 7, 7) # (n,3136) -> (64,7,7)
+        x = x.view(-1, 63, 7, 7) # (n,3136) -> (64,7,7)
         
         #Encode label
-        if c != -1 :
+       
         
-            c = self.emb(c) #(n,) -> (n,50)
-            c = self.label_lin(c) #(n,50) -> (n,49)
-            c = c.view(-1,1,7,7) #(n,49) -> (n,1,7,7)
+        c = self.emb(c) #(n,) -> (n,50)
+        c = self.label_lin(c) #(n,50) -> (n,49)
+        c = c.view(-1,1,7,7) #(n,49) -> (n,1,7,7)
         
         
-            x = torch.cat((c,x),1) #concat image[64,7,7] with text [1,7,7]
-            x = self.conv_x_c(x) #[65,7,7] -> [64,16,16]
-            x = F.relu(x)
+        x = torch.cat((c,x),1) #concat image[64,7,7] with text [1,7,7]
+        #x = self.conv_x_c(x) #[65,7,7] -> [64,16,16]
+        #x = F.relu(x)
             
         
-        x = self.ct1(x) 
+        x = self.ct1(x) #[n, 64, 16, 16] [32,34,34]
         x = F.relu(x)
         
         
@@ -217,8 +221,8 @@ if torch.cuda.is_available():
     discriminator.cuda()
     loss_func.cuda()
     
-optimizer_G = torch.optim.Adam(generator.parameters(), lr=LR)
-optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=LR)
+optimizer_G = torch.optim.Adam(generator.parameters(), lr=LR,betas=(B1 ,B2))
+optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=LR,betas=(B1 ,B2))
    
 Tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor   
 
@@ -230,8 +234,10 @@ if torch.cuda.is_available():
     discriminator.to(device)
     loss_func.to(device)
     
-
-   
+img_list = []
+G_losses = []
+D_losses = []
+iters = 0
 for epoch in range(NUM_EPOCHS):
     st = time.time()
     for i, (imgs,labels) in enumerate(train_loader):
@@ -246,67 +252,72 @@ for epoch in range(NUM_EPOCHS):
 
         # transform to tensor [256,1,28,28]
         real_imgs = Variable(imgs.type(Tensor))
-        fake_labels = build_fake_labels(labels)
+        fake_labels = build_fake_labels(labels.to(device))
         
+        labels = labels.to(device)
+        
+        optimizer_D.zero_grad()
+        #Forward pass through Discriminator
+        s_r = discriminator(real_imgs,labels)
+        sr_loss = loss_func(s_r, valid)
+        sr_loss.backward()
+        D_x = s_r.mean().item()
 
-        # -----------------
-        #  Train Generator
-        # -----------------
-
-        optimizer_G.zero_grad()
 
 
         # Generate a batch of images
         gen_imgs = generator(z,labels)
-
-
-        #Pass fake and real images through discriminator        
-        s_r = discriminator(gen_imgs,labels)
-        s_w = discriminator(real_imgs,fake_labels)
-        s_f = discriminator(real_imgs,labels)
-
         
-        #Loss measures generator's ability to fool the discriminator
-        g_loss = loss_func(s_f, valid)
-
-        g_loss.backward()
-        optimizer_G.step()
-
-        # ---------------------
-        #  Train Discriminator
-        # ---------------------
-
-        optimizer_D.zero_grad()
-
-        # Measure discriminator's ability to classify real from generated samples
-        
-        sr_loss = loss_func(s_r, valid)
-        sw_loss = loss_func(s_w, fake)
+        # Calculate D's loss on the all-fake batch
+        #s_w = discriminator(real_imgs,fake_labels)
+        s_f = discriminator(gen_imgs.detach(),labels.detach())
         sf_loss = loss_func(s_f, fake)
+        sf_loss.backward()
+        D_G_z1 = s_f.mean().item()
         
-        d_loss = sr_loss + ((sw_loss+sf_loss) / 2)
-
-        d_loss.backward()
+        d_loss = s_f + s_r
         optimizer_D.step()
         
-        batches_done = epoch * len(train_loader) + i
-        
        
+        # Measure discriminator's ability to classify real from generated samples
+        #sr_loss = loss_func(s_r, valid)
+        #sw_loss = loss_func(s_w, fake)
+        #sf_loss = loss_func(s_f, fake)
+        
+        #d_loss = sr_loss + ((sw_loss+sf_loss) / 2)
+
+        
+        # -----------------
+        #  Train Generator
+        # -----------------
+        optimizer_G.zero_grad()
+        #Loss measures generator's ability to fool the discriminator
+        s_f = discriminator(gen_imgs,labels)
+        g_loss = loss_func(s_f, valid)
+        g_loss.backward()
+        D_G_z2 = s_f.mean().item()
+        optimizer_G.step()
+      
+
+        
+       # Output training stats
+        if i % 50 == 0:
+            print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f tD(x): %.4f tD(G(z)): %.4f / %.4f'
+                  % (epoch, NUM_EPOCHS, i, len(train_loader),d_loss[0].item(), g_loss.item(), D_x, D_G_z1, D_G_z2))
+
+        # Save Losses for plotting later
+        G_losses.append(g_loss.item())
+        D_losses.append(d_loss[0].item())
+
+        # Check how the generator is doing by saving G's output on fixed_noise
+        if (iters % 500 == 0) or ((epoch == NUM_EPOCHS-1) and (i == len(train_loader)-1)):
+            with torch.no_grad():
+                fake = generator(z,labels).detach().cpu()
+                img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
+
+        iters += 1
     
-    print(
-        "[Epoch %d/%d] [Batch %d/%d] [D loss: %f] [G loss: %f]" 
-        % (epoch,NUM_EPOCHS, i, len(train_loader), d_loss.item(), g_loss.item()))  
-    
-    et = time.time()
-    print(et-st)
-    
-    if False:
-        checkpoint = {GEN_STATE_DICT : generator.state_dict(), 
-                  GEN_OPTIMIZER : optimizer_G.state_dict(),
-                  DISC_STATE_DICT : discriminator.state_dict(),
-                  DISC_OPTIMIZER : optimizer_D.state_dict()}
-        save_checkpoint(checkpoint)
-    
+
     
     
 #%% gen image 
@@ -314,68 +325,132 @@ generator.to('cpu')
 discriminator.to('cpu')
 
 rand_latent = torch.rand_like(torch.Tensor(1,100))
+caption = 0
 with torch.no_grad():
     for image,_ in example_loader:
         f, axarr = plt.subplots(1)
         
 
-        
-        fake_image = generator(rand_latent)  
-       
-        fake_image = fake_image[0].reshape(-1, 28, 28)
-        axarr.imshow(fake_image[0].cpu())    
-        break
-generator.to('cpu')
-discriminator.to('cpu')
-
-
-with torch.no_grad():
-    for image,_ in example_loader:
-        f, axarr = plt.subplots(1)
-        
-
-        rand_latent = torch.rand_like(torch.Tensor(1,100))    
-        fake_image = generator(rand_latent)  
+        caption = torch.tensor(caption, dtype=torch.int64)
+        fake_image = generator(rand_latent,caption)  
        
         fake_image = fake_image[0].reshape(-1, 28, 28)
         axarr.imshow(fake_image[0].cpu())    
         break
     
     
+#%%
+
+
     
 #%% Discriminate image
 generator.to('cpu')
 discriminator.to('cpu')
+
+
 with torch.no_grad():
-    for image, _ in example_loader:
-        int = 1#random.randint(0, 1)
+    for  i, (imgs, labels) in enumerate(example_loader):
+        int = 0#random.randint(0, 1)
         f, axarr = plt.subplots(1)
         
-       
+        fake_labels = build_fake_labels(labels.to(device))
+        labels = labels.to('cpu')
+        z = Variable(Tensor(np.random.normal(0, 1, (1,LATENT_DIM)))).cpu()
+        caption = torch.tensor(1, dtype=torch.int64)
         
-        z = Variable(Tensor(np.random.normal(0, 1, (256,LATENT_DIM)))).cpu()
-        fake_image = generator(z)[0]#.detach().numpy()
+        fake_image = generator(z,caption)#.detach().numpy()
         
         
-        image = image.reshape(-1, 28, 28)
-        print(fake_image.shape)
+        #imgs = imgs[0]
+        #print(fake_image.shape)
         
         #feed discriminator fake image, expect "0" output
         if int == 0:
-            axarr.imshow(fake_image[0])
-            pred = discriminator(fake_image)
+            axarr.imshow(fake_image[0].reshape(-1, 28, 28)[0])
+            pred = discriminator(fake_image,caption)
             print("Discriminator Prediction: {},Should be: {}".format(pred,"0"))
         #feed discriminator real image, expect "1" output
         else:
-            axarr.imshow(image[0])
-            pred = discriminator(image)
-            print("Discriminator Prediction: {},Should be: {}".format(pred,"1"))
+            axarr.imshow(imgs[0].reshape(-1, 28, 28)[0])
+            pred = discriminator(imgs,labels[0])
+            print("Discriminator Prediction: {},Should be: {}, label= {}".format(pred,"1",labels[0]+1))
         
         
         
         
         
         break    
+#%%
+train_disc(1)
+    
+#%%Train disriminator for x epochs 
+
+def train_disc(epochs=100):
+    if torch.cuda.is_available():
+        generator.to(device)
+        discriminator.to(device)
+        loss_func.to(device)
+        
+    for epoch in range(epochs):
+        st = time.time()
+        for i, (imgs,labels) in enumerate(train_loader):
+              
+            
+            # Adversarial ground truths
+            valid = Variable(Tensor(imgs.size(0), 1).fill_(1.0), requires_grad=False)
+            fake = Variable(Tensor(imgs.size(0), 1).fill_(0.0), requires_grad=False)
+            
+            # Sample noise as generator input
+            z = Variable(Tensor(np.random.normal(0, 1, (imgs.shape[0],LATENT_DIM))))
+    
+            # transform to tensor [256,1,28,28]
+            real_imgs = Variable(imgs.type(Tensor))
+            fake_labels = build_fake_labels(labels.to(device))
+            
+            labels = labels.to(device)
+            # -----------------
+            #  Train Generator
+            # -----------------
+    
+    
+            # Generate a batch of images
+            gen_imgs = generator(z,labels)
+    
+    
+            #Pass fake and real images through discriminator        
+            s_r = discriminator(gen_imgs,labels)
+            s_w = discriminator(real_imgs,fake_labels)
+            s_f = discriminator(real_imgs,labels)
+            
+            
+            # ---------------------
+            #  Train Discriminator
+            # ---------------------
+            # Measure discriminator's ability to classify real from generated samples
+            optimizer_D.zero_grad()
+            sr_loss = loss_func(s_r, valid)
+            sw_loss = loss_func(s_w, fake)
+            sf_loss = loss_func(s_f, fake)
+            
+            d_loss = (sr_loss + ((sw_loss+sf_loss) / 2))/2
+    
+            d_loss.backward()
+            optimizer_D.step()
+          
+            batches_done = epoch * len(train_loader) + i
+            
+           
+        
+        print(
+            "[Epoch %d/%d] [Batch %d/%d] [D loss: %f] " 
+            % (epoch,NUM_EPOCHS, i, len(train_loader), d_loss.item()))  
+        
+        et = time.time()
+        print(et-st)
+       
+    
+    
+    
     
 #%%
 #TODO: add a check if prediction ~0.5 warn not to save checkpoint

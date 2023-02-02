@@ -115,7 +115,8 @@ class Discriminator(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.dropout(x, training=self.training)
         x = self.fc2(x)
-        return torch.sigmoid(x)
+        x = torch.sigmoid(x)
+        return x
     
 #%% Generate Fake Data: output like real data [1, 28, 28] and values -1, 1
 class Generator(nn.Module):
