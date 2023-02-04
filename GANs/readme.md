@@ -17,7 +17,7 @@ GAN.ipynb is used mostly for experimenting
 3. **gan_pytorch6.pth.tar**- 6th, best yet iteration of the model
 
 ## Sample Images from cGAN Model:
-![results image](images/results.png)
+![results image](images/results.jpg)
 
 
 
