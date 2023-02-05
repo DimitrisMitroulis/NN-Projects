@@ -24,7 +24,7 @@ from  torch.utils import data
 from mpl_toolkits.axes_grid1 import ImageGrid
 
 
-NUM_EPOCHS = 50
+NUM_EPOCHS = 150
 LR = 0.0002
 LATENT_DIM = 100
 IMG_SIZE = 28
@@ -32,10 +32,14 @@ CHANNELS = 1
 B1 = 0.5
 B2 = 0.999
 
+
 GEN_STATE_DICT = "gen_state_dict"
 DISC_STATE_DICT = "disc_state_dict"
 GEN_OPTIMIZER = "gen_optimizer"
 DISC_OPTIMIZER = "disc_optimizer"
+G_LOSSES = "g_losses"
+D_LOSSES = "d_losses"
+
 
 
 SHUFFLE = True
@@ -77,6 +81,10 @@ def load_checkpoint(checkpoint):
     optimizer_G.load_state_dict(checkpoint[GEN_OPTIMIZER])
     discriminator.load_state_dict(checkpoint[DISC_STATE_DICT])
     optimizer_D.load_state_dict(checkpoint[DISC_OPTIMIZER])
+    if 'G_losses' in locals() and 'D_losses' in locals():
+        G_losses.load_state_dict(checkpoint[G_LOSSES])
+        D_losses.load_state_dict(checkpoint[D_LOSSES])
+    
 
 
 # takes input tensor and return a tensor of same size but every element has different value
@@ -123,7 +131,7 @@ def gen_image(caption=-1,randomLatent=True):
             print("Supposed to be %d" %caption.item())
             break
         
-def discriminate_image(caption,genOrReal=random.randint(0, 1)):
+def discriminate_image(caption=-1,genOrReal=random.randint(0, 1)):
     generator.to('cpu')
     discriminator.to('cpu')
     
@@ -134,6 +142,8 @@ def discriminate_image(caption,genOrReal=random.randint(0, 1)):
             fake_labels = build_fake_labels(labels.to(device))
             labels = labels.to('cpu')
             z = Variable(Tensor(np.random.normal(0, 1, (1,LATENT_DIM)))).cpu()
+            if caption == -1:
+                caption = random.randint(0, 9)
             caption = torch.tensor(caption, dtype=torch.int64)
             
             
@@ -148,7 +158,7 @@ def discriminate_image(caption,genOrReal=random.randint(0, 1)):
                 fake_image = generator(z,labels[0])
                 axarr.imshow(imgs[0].reshape(-1, 28, 28)[0])
                 pred = discriminator(imgs.detach(),labels[0].detach()).detach()
-                print("Discriminator Prediction: {},Should be: {}, label= {}".format(pred,"1",labels[0]))
+                print("Discriminator Prediction: {},Should be: {}, label= {}".format(pred,"1",labels[0]+1))
             
     
             break        
@@ -303,7 +313,6 @@ G_losses = []
 D_losses = []
 iters = 0
 
-
 if __name__ == '__main__':
     for epoch in range(NUM_EPOCHS):
         for i, (imgs, labels) in enumerate(train_loader):
@@ -376,7 +385,7 @@ if __name__ == '__main__':
                     img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
     
             iters += 1
-
+            
 
 
 
@@ -384,7 +393,7 @@ if __name__ == '__main__':
 
 # %%Plot Losses
 
-plt.figure(figsize=(10,5))
+plt.figure(figsize=(11,5))
 plt.title("Generator and Discriminator Loss During Training")
 plt.plot(G_losses,label="G")
 plt.plot(D_losses,label="D")
@@ -397,13 +406,11 @@ plt.show()
 checkpoint = {GEN_STATE_DICT : generator.state_dict(), 
               GEN_OPTIMIZER : optimizer_G.state_dict(),
               DISC_STATE_DICT : discriminator.state_dict(),
-              DISC_OPTIMIZER : optimizer_D.state_dict(),
-              "g_losses": G_losses,
-              "d_losses": D_losses}
-save_checkpoint(checkpoint, "cond_gan_pytorch6.pth.tar")
+              DISC_OPTIMIZER : optimizer_D.state_dict()}
+save_checkpoint(checkpoint, "cond_gan_pytorch10.pth.tar")
 
 # %%  Load Model
-load_checkpoint(torch.load("cond_gan_pytorch6.pth.tar",map_location=(device)))
+load_checkpoint(torch.load("cond_gan_pytorch10.pth.tar",map_location=(device)))
 
 
 # %%
@@ -428,4 +435,22 @@ with torch.no_grad():
     
     plt.show()
         
+# %%
+import gc
+torch.cuda.empty_cache()
+gc.collect()
+
+# %%
+with torch.no_grad():
+    generator.to('cpu')
+    discriminator.to('cpu')
     
+    t1 = 1
+    t2 = 3
+    w = 0.5
+    t1 = torch.tensor(t1, dtype=torch.int64).to
+    t2 = torch.tensor(t2, dtype=torch.int64)
+    z = Variable(Tensor(np.random.normal(0, 1, (1,LATENT_DIM))))
+    gen_imgs = generator(z,t1,t2)
+
+
