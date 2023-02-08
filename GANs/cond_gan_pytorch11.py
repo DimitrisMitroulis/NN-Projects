@@ -105,7 +105,7 @@ def add_noise(inputs, variance):
     noise = torch.randn_like(inputs)
     return inputs + variance*noise
 
-def gen_image(caption=-1,randomLatent=True):
+def gen_image(c1=-1,randomLatent=True):
     generator.to('cpu')
     discriminator.to('cpu')
 
@@ -118,17 +118,48 @@ def gen_image(caption=-1,randomLatent=True):
             else:
                 latent = specific_latent
                 
-            if caption == -1:
-                caption = random.randint(0, 9)
+            if c1 == -1:
+                c1 = random.randint(0, 9)
             
-            caption = torch.tensor(caption, dtype=torch.int64)
-            fake_image = generator(latent,caption)  
+            
+            
+            c1 = torch.tensor(c1, dtype=torch.int64)
+            fake_image = generator(latent,c1)  
            
             
             #axarr.imshow(add_noise(image[0][0],0.5))    
             axarr.imshow(fake_image[0][0])   
-            print("Supposed to be %d" %caption.item())
+            print("Supposed to be %d" %c1.item())
             break
+        
+def gen_images(c1=-1, c2=-1, w=round(random.uniform(0.1, 0.9)), randomLatent=True):
+    generator.to('cpu')
+    discriminator.to('cpu')
+
+    with torch.no_grad():
+        for image,_ in example_loader:
+            f, axarr = plt.subplots(1)
+            
+            if randomLatent:
+                latent = torch.rand_like(torch.Tensor(1,100))
+            else:
+                latent = specific_latent
+                
+            if c1 == -1:
+                c1 = random.randint(0, 9)
+                 
+            if c2 == -1:
+                c2 = random.randint(0, 9)
+
+              
+            fake_image = generator(latent,torch.tensor([c1]), torch.tensor([c2]),w)  
+            
+           
+            
+            #axarr.imshow(add_noise(image[0][0],0.5))    
+            axarr.imshow(fake_image[0][0])   
+            print("Supposed to be %d and %d" %(c1,c2))
+            break        
         
 def discriminate_image(caption=-1,genOrReal=random.randint(0, 1)):
     generator.to('cpu')
@@ -260,7 +291,7 @@ class Generator(nn.Module):
         self.conv_x_c = nn.ConvTranspose2d(65, 64, 4, stride=2)  # upsample [65,7,7] -> [64,14,14]
         self.tanh = nn.Tanh()
 
-    def forward(self, x, c1,c2=-1,w=0.5):
+    def forward(self, x, c1, c2 = -1, w = round(random.uniform(0.1, 0.9), 1)):
         # Pass latent space input into linear layer and reshape
         x = self.lin1(x)  # (n,100) -> (n,3187)
         x = F.leaky_relu(x)
@@ -360,11 +391,8 @@ if __name__ == '__main__':
             # transform to tensor [256,1,28,28]
             real_imgs = Variable(imgs.type(Tensor))
             fake_labels = build_fake_labels(labels.to(device))
-    
-            labels = labels.to(device)
-            real_imgs = real_imgs.to(device)
-    
-            
+
+               
     
             #Forward pass through Discriminator
             real_pred = discriminator(real_imgs,labels)
@@ -447,11 +475,13 @@ plt.show()
 checkpoint = {GEN_STATE_DICT : generator.state_dict(), 
               GEN_OPTIMIZER : optimizer_G.state_dict(),
               DISC_STATE_DICT : discriminator.state_dict(),
-              DISC_OPTIMIZER : optimizer_D.state_dict()}
-save_checkpoint(checkpoint, "cond_gan_pytorch10.pth.tar")
+              DISC_OPTIMIZER : optimizer_D.state_dict(),
+              G_LOSSES : G_losses,
+              D_LOSSES : D_losses}
+save_checkpoint(checkpoint, "cond_gan_pytorch11-1.pth.tar")
 
 # %%  Load Model
-load_checkpoint(torch.load("cond_gan_pytorch10.pth.tar",map_location=(device)))
+load_checkpoint(torch.load("cond_gan_pytorch11.pth.tar",map_location=(device)))
 
 
 # %%
@@ -475,9 +505,41 @@ with torch.no_grad():
         ax.imshow(im[0][0])
     
     plt.show()
+
+# %%
+
+c1 = 1
+c2 = 1
+w = 0.5
+
+randomLatent = False
+
+generator.to('cpu')
+discriminator.to('cpu')
+
+with torch.no_grad():
+    for image,_ in example_loader:
+        f, axarr = plt.subplots(1)
         
+        if randomLatent:
+            latent = torch.rand_like(torch.Tensor(1,100))
+        else:
+            latent = specific_latent
+            
+        if c1 == -1:
+            c1 = random.randint(0, 9)
+            
+        if c2 == -1:
+            c2 = random.randint(0, 9)
 
-
-
+         
+        fake_image = generator(latent,torch.tensor([c1]), torch.tensor([c2]),w)  
+       
+        
+        #axarr.imshow(add_noise(image[0][0],0.5))    
+        axarr.imshow(fake_image[0][0])   
+        print("Supposed to be %d and %d" % (c1,c2))
+        break        
     
-    
+
+

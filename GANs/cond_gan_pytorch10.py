@@ -420,7 +420,9 @@ plt.show()
 checkpoint = {GEN_STATE_DICT : generator.state_dict(), 
               GEN_OPTIMIZER : optimizer_G.state_dict(),
               DISC_STATE_DICT : discriminator.state_dict(),
-              DISC_OPTIMIZER : optimizer_D.state_dict()}
+              DISC_OPTIMIZER : optimizer_D.state_dict(),
+              G_LOSSES : G_losses,
+              D_LOSSES : D_losses}
 save_checkpoint(checkpoint, "cond_gan_pytorch6-1.pth.tar")
 
 # %%  Load Model
