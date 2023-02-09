@@ -1,4 +1,5 @@
 # %% Import and stuff
+
 import torch
 from torch import nn
 from torchvision import transforms
@@ -16,7 +17,7 @@ import matplotlib.colors as mcolors
 import os
 
 NUM_EPOCHS = 150
-LR = 0.0005
+LR = 0.0008
 LATENT_DIM = 100
 IMG_SIZE = 28
 CHANNELS = 1
@@ -35,7 +36,7 @@ LOSSES = "losses"
 SHUFFLE = True
 PIN_MEMORY = True
 NUM_WORKERS = 0
-BATCH_SIZE = 500
+BATCH_SIZE = 2000
 
 specific_latent = torch.tensor([[0.7628, 0.1779, 0.3978, 0.3606, 0.6387,
          0.3044, 0.8340, 0.3884, 0.9313, 0.5635, 0.1994, 0.6934, 0.5326,
@@ -119,40 +120,72 @@ def load_checkpoint(checkpoint):
     model.load_state_dict(checkpoint[STATE_DICT])
     optimizer.load_state_dict(checkpoint[MODEL_OPTIMIZER])
 
-def plot_generated_images(unnormalizer=None,
-                          figsize=(20, 2.5), n_images=15):
+def get_numbered_images():  
+    numberred_images = []
+    
+    for batch_idx, (images, labels) in enumerate(train_loader):
+        for i in range(len(labels[:])):
+            if batch_idx == labels[i].item():
+                numberred_images.append(images[i])
+                break          
+    
+    return numberred_images
+          
 
+
+def plot_generated_images(figsize=(20, 2.5), n_images=10):
+    model.to(device)
     fig, axes = plt.subplots(nrows=2, ncols=n_images, 
                              sharex=True, sharey=True, figsize=figsize)
     
-    for batch_idx, (features, _) in enumerate(train_loader):
+    for batch_idx, (images, _) in enumerate(train_loader):
         
-        features = features.to(device)
-
-        color_channels = features.shape[1]
-        image_height = features.shape[2]
-        image_width = features.shape[3]
-        
+        images = images.to(device)
         with torch.no_grad():
-           encoded, z_mean, z_log_var, decoded_images = model(features)[:n_images]
+           encoded, z_mean, z_log_var, decoded_images = model(images)[:n_images]
 
-        orig_images = features[:n_images]
+        orig_images = images[:n_images]
         break
 
     for i in range(n_images):
         for ax, img in zip(axes, [orig_images, decoded_images]):
-            curr_img = img[i].detach().to(torch.device('cpu'))        
-            if unnormalizer is not None:
-                curr_img = unnormalizer(curr_img)
+            curr_img = img[i].detach().to(torch.device('cpu'))
+            ax[i].imshow(curr_img.view((28, 28)))
+            
+            
+def plot_numberred_images(iteration, numbered_images, figsize=(20, 2.5)):
 
-            if color_channels > 1:
-                curr_img = np.transpose(curr_img, (1, 2, 0))
-                ax[i].imshow(curr_img)
-            else:
-                ax[i].imshow(curr_img.view((image_height, image_width)))
-                
+    with torch.no_grad(): 
+        decoded_images = []
+        model.to(device)
 
-def plot_latent_space_with_labels(epoch, num_classes=10):
+        n_images = 10
+
+        fig, axes = plt.subplots(nrows=2, ncols=n_images, 
+                                 sharex=True, sharey=True, figsize=(20, 2.5))
+        
+        for i in range(len(numbered_images)): 
+                     
+            image = numbered_images[i].to(device)
+                     
+            _,_,_,output = model(image[None, :])
+                                       
+            decoded_images.append(output[0])
+        
+        
+        for i in range(n_images):
+            for ax, img in zip(axes, [numbered_images, decoded_images]):
+                curr_img = img[i].detach().to(torch.device('cpu'))
+                ax[i].imshow(curr_img.view((28, 28)))            
+        
+        #plt.savefig('numbered_images/iteration'+str(iteration)+'.png')
+        plt.figure().clear()
+            
+            
+          
+
+
+def plot_latent_space_with_labels(iteration, num_classes=10):
     d = {i:[] for i in range(num_classes)}
 
     with torch.no_grad():
@@ -178,18 +211,17 @@ def plot_latent_space_with_labels(epoch, num_classes=10):
             alpha=0.5)
 
     #plt.legend()
-    plt.savefig('plot_images/iteration'+str(epoch)+'.png')
+    #plt.savefig('latent_space/iteration'+str(iteration)+'.png')
     plt.figure().clear()
 
 
 # %%Train Data
+
 set_deterministic
 set_all_seeds(RANDOM_SEED)
 
 transform = transforms.Compose([
-    transforms.ToTensor(),
-    #transforms.Normalize([0.5], [0.5])
-    ])
+    transforms.ToTensor()])
 
 
 train_dataset = torchvision.datasets.MNIST(
@@ -225,6 +257,7 @@ example_loader = data.DataLoader(
                                 )
 
 # %%Model
+
 class Reshape(nn.Module):
     def __init__(self, *args):
         super().__init__()
@@ -257,11 +290,11 @@ class VAE(nn.Module):
                 nn.Flatten(),
         )    
         
-        self.z_mean = torch.nn.Linear(3136, 2) # 2 dim for visualization purposes
-        self.z_log_var = torch.nn.Linear(3136, 2)
+        self.z_mean = torch.nn.Linear(3136, 20) # 2 dim for visualization purposes
+        self.z_log_var = torch.nn.Linear(3136, 20)
         
         self.decoder = nn.Sequential(
-                torch.nn.Linear(2, 3136),
+                torch.nn.Linear(20, 3136),
                 Reshape(-1, 64, 7, 7),
                 nn.ConvTranspose2d(64, 64, stride=(1, 1), kernel_size=(3, 3), padding=1),
                 nn.LeakyReLU(0.01),
@@ -301,6 +334,7 @@ loss_function = nn.MSELoss(reduction='none')
 
 #Adam Optimizer with lr = 0.1
 optimizer = torch.optim.Adam(model.parameters(), lr=LR, betas=(B1 ,B2))
+#scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
 
 if torch.cuda.is_available():
     model.cuda()
@@ -308,58 +342,76 @@ if torch.cuda.is_available():
 
 
 # %%Train Model
-logging_interval = 50
+
+
+numbered_images = get_numbered_images()
+
+logging_interval = 10
 losses = []
 kl_losses = []
 recon_losses = []
+recon_loss = 0
+kl_div = 0
 iter = 0
 alpha = 1
 
+
 if torch.cuda.is_available():
-    model.to(device)
+    model = model.to(memory_format=torch.channels_last)
     loss_function.to(device)
+    model.train()
+    torch.backends.cudnn.benchmark = True
+    
+   
 
-model.train()
-if __name__ == '__main__':
-    for epoch in range(NUM_EPOCHS):
-        st = time.time()
-        for batch, (imgs, labels) in enumerate(train_loader):
 
-            imgs = imgs.to(device)
+for epoch in range(NUM_EPOCHS):
+    st = time.time()
+    for batch, (imgs, labels) in enumerate(train_loader):
 
-            # set gradients to zero
-            optimizer.zero_grad()
+        imgs = imgs.to(device,memory_format=torch.channels_last)
 
-            encoded, z_mean, z_log_var, decoded = model(imgs)
+        # set gradients to zero
+        optimizer.zero_grad()
 
-            # Total Loss = Recon_loss + KLDivergence
-            kl_div = -0.5 * torch.sum(1 + z_log_var 
-                                      - z_mean**2 
-                                      - torch.exp(z_log_var), 
-                                      axis=1) # sum over latent dimension
+        encoded, z_mean, z_log_var, decoded = model(imgs)
 
-            kl_div = kl_div.mean()
+        # Total Loss = Recon_loss + KLDivergence
+        kl_div = -0.5 * torch.sum(1 + z_log_var 
+                                  - z_mean**2 
+                                  - torch.exp(z_log_var), 
+                                  axis=1) # sum over latent dimension
 
-            recon_loss = loss_function(decoded, imgs)
-            recon_loss = recon_loss.view(BATCH_SIZE, -1).sum(axis=1) # sum over pixels
-            recon_loss = recon_loss.mean() # average over batch dimension
-            
-            loss = alpha*recon_loss + kl_div
-            loss.backward()
-            
-            
-            optimizer.step()  # Updates Weights
-            
-            if iter % logging_interval == 0:
-                print('[%d/%d][%d/%d]\t, LOSS:%.4f (recon_loss : %.4f, kl_loss = %.6f'
-                      %(epoch, NUM_EPOCHS, batch, len(train_loader), loss.item(), recon_loss.item(), kl_div.item()))
-                plot_latent_space_with_labels(iter)
+        kl_div = kl_div.mean()
+
+        recon_loss = loss_function(decoded, imgs)
+        recon_loss = recon_loss.view(BATCH_SIZE, -1).sum(axis=1) # sum over pixels
+        recon_loss = recon_loss.mean() # average over batch dimension
         
-            losses.append(loss.item())
-            kl_losses.append(kl_div.item())
-            recon_losses.append(recon_loss.item())
-            
-            iter +=1
+        loss = alpha*recon_loss + kl_div
+        loss.backward()
+        
+        
+        optimizer.step()  # Updates Weights
+        
+        loss_item = loss.item()
+        recon_loss_item = recon_loss.item()
+        kl_div_item = kl_div.item()
+        
+        #scheduler.step()
+        
+        
+        if iter % logging_interval == 0:
+            print('[%d/%d][%d/%d]\t, LOSS:%.4f (recon_loss : %.4f, kl_loss = %.6f'
+                  %(epoch, NUM_EPOCHS, batch, len(train_loader), loss_item, recon_loss_item, kl_div_item))
+            #plot_latent_space_with_labels(iter*BATCH_SIZE)
+            #plot_numberred_images(iter*BATCH_SIZE,numbered_images)
+    
+        losses.append(loss_item)
+        kl_losses.append(kl_div_item)
+        recon_losses.append(recon_loss_item)
+        
+        iter +=1
     
 # %%
 plt.figure(figsize=(10, 5))
@@ -379,10 +431,10 @@ checkpoint = {STATE_DICT : model.state_dict(),
               "losses": losses,
               'recon_loss':recon_loss,
               'kl_div':kl_div}
-save_checkpoint(checkpoint, "VAE.pth.tar")
+save_checkpoint(checkpoint, "VAE4.pth.tar")
 
 # %%  Load Model
-load_checkpoint(torch.load("VAE.pth.tar",map_location=(device)))
+load_checkpoint(torch.load("VAE2.pth.tar",map_location=(device)))
 
 
 # %%Plot latent space
@@ -418,6 +470,61 @@ plt.show()
 
 
 # %%PLot generated images
+numberred_images = []
 
+for batch_idx, (images, labels) in enumerate(train_loader):
+    for i in range(len(labels[:])):
+        if batch_idx == labels[i].item():
+            numberred_images.append(images[i])
+            break
+ 
+# %%
+if 'numbered_images' not in locals():
+    numbered_images = get_numbered_images()
 
-plot_generated_images()
+with torch.no_grad(): 
+    decoded_images = []
+    model.to(device)
+
+    n_images = 10
+
+    fig, axes = plt.subplots(nrows=2, ncols=n_images, 
+                             sharex=True, sharey=True, figsize=(20, 2.5))
+    
+    for i in range(len(numberred_images)): 
+                 
+        image = numberred_images[i].to(device)
+                 
+        _,_,_,output = model(image[None, :])
+                                   
+        decoded_images.append(output[0])
+    
+    
+    for i in range(n_images):
+        for ax, img in zip(axes, [numbered_images, decoded_images]):
+            curr_img = img[i].detach().to(torch.device('cpu'))
+            ax[i].imshow(curr_img.view((28, 28)))            
+
+# %%
+latent = torch.rand_like(torch.Tensor(20))
+latent = latent.to(device)
+
+# %%
+# Sample from gaussian distribution
+with torch.no_grad():
+    fig, axes = plt.subplots(nrows=2, ncols=1, sharex=True, sharey=True)
+    for batch_idx, (images, labels) in enumerate(example_loader):
+        image = images.to(device)
+        enc = model.encoding_fn(image)[0]
+        #latent = torch.rand_like(enc)
+        
+        decoded = model.decoder(latent)
+        decoded = decoded.detach().to(torch.device('cpu'))
+        
+        enc = model.decoder(enc)
+        enc = enc.detach().to(torch.device('cpu'))
+        
+        axes[0].imshow(enc.view((28, 28)))   
+        axes[1].imshow(decoded.view((28, 28)))   
+        break
+        
