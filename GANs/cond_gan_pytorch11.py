@@ -105,6 +105,21 @@ def add_noise(inputs, variance):
     noise = torch.randn_like(inputs)
     return inputs + variance*noise
 
+# takes input tensor and return a tensor of same size but every element has different value
+def build_fake_labels(old_list):
+  
+    new_list = []
+
+    for i, x in enumerate(old_list):
+
+        if (i % 10) != x:
+            new_list.append(i % 10)
+        else:
+            new_list.append((x.item()+1) % 10)
+
+    return torch.tensor(new_list, dtype=torch.int64).to(device)
+
+
 def gen_image(c1=-1,randomLatent=True):
     generator.to('cpu')
     discriminator.to('cpu')

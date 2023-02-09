@@ -506,6 +506,7 @@ with torch.no_grad():
             ax[i].imshow(curr_img.view((28, 28)))            
 
 # %%
+# Keep latent noise the same to get same results
 latent = torch.rand_like(torch.Tensor(20))
 latent = latent.to(device)
 
@@ -516,7 +517,7 @@ with torch.no_grad():
     for batch_idx, (images, labels) in enumerate(example_loader):
         image = images.to(device)
         enc = model.encoding_fn(image)[0]
-        #latent = torch.rand_like(enc)
+        latent = torch.rand_like(enc)
         
         decoded = model.decoder(latent)
         decoded = decoded.detach().to(torch.device('cpu'))
