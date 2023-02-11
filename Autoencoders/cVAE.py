@@ -154,7 +154,20 @@ def plot_numberred_images(iteration,numbered_images,figsize=(20, 2.5)):
         #plt.savefig('numbered_images/'+str(iteration)+'.png')
         plt.figure().clear()
             
-     
+def plot_image(c):
+    
+
+    with torch.no_grad():
+        fig, axes = plt.subplots(nrows=1, ncols=1, sharex=True, sharey=True)
+        
+        c = torch.tensor(c, dtype=torch.int64).to(device)
+        latent = torch.rand_like(torch.Tensor(20)).to(device)
+    
+        decoded = model.decoder(latent,c).detach().to(torch.device('cpu'))
+        axes.imshow(decoded.view((28, 28)))   
+        
+
+
 
 
 def plot_latent_space_with_labels(iteration, num_classes=10):
@@ -421,9 +434,9 @@ for epoch in range(NUM_EPOCHS):
 
 plt.figure(figsize=(10, 5))
 plt.title("Loss During Training")
-plt.plot(losses[:], label="L")
-plt.plot(kl_losses[:], label="KL")
-plt.plot(recon_losses[:], label="Recon")
+plt.plot(losses[:3000], label="L")
+plt.plot(kl_losses[:3000], label="KL")
+plt.plot(recon_losses[:3000], label="Recon")
 plt.xlabel("iterations")
 plt.ylabel("Loss")
 plt.legend()
@@ -436,7 +449,7 @@ checkpoint = {STATE_DICT : model.state_dict(),
               LOSSES: losses,
               RECON_LOSS:recon_losses,
               KL_DIV:kl_losses}
-save_checkpoint(checkpoint, "cVAE.pth.tar")
+save_checkpoint(checkpoint, "cVAE4.pth.tar")
 
 # %%  Load Model
 load_checkpoint(torch.load("cVAE.pth.tar",map_location=(device)))
