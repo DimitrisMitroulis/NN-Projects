@@ -101,6 +101,7 @@ def load_checkpoint(checkpoint):
     losses = checkpoint[LOSSES]
     recon_losses = checkpoint[RECON_LOSS]
     kl_losses = checkpoint[KL_DIV]
+    return losses, kl_losses, recon_losses
     
     
 def get_numbered_images():  
@@ -259,13 +260,12 @@ class Trim(nn.Module):
     def forward(self, x):
         return x[:, :, :28, :28]
 
-
 class VAE(nn.Module):
     def __init__(self):
         super().__init__()
            
-        self.z_mean = torch.nn.Linear(3136, 20) # 2 dim for visualization purposes
-        self.z_log_var = torch.nn.Linear(3136, 20)
+        self.z_mean = torch.nn.Linear(3136, LATENT_SPACE_SIZE) # 2 dim for visualization purposes
+        self.z_log_var = torch.nn.Linear(3136, LATENT_SPACE_SIZE)
         
         self.d_emb = nn.Embedding(10, 50)
         self.e_emb_fc = nn.Linear(50, 784)
@@ -284,7 +284,7 @@ class VAE(nn.Module):
         #########
         # Decoder
         #########  
-        self.d_lin = torch.nn.Linear(20, 3087)
+        self.d_lin = torch.nn.Linear(LATENT_SPACE_SIZE, 3087)
         self.d_conv1 = nn.ConvTranspose2d(64, 64, stride=(1, 1), kernel_size=(3, 3), padding=1)
         self.d_conv2 = nn.ConvTranspose2d(64, 64, stride=(2, 2), kernel_size=(3, 3), padding=1)              
         self.d_conv3 = nn.ConvTranspose2d(64, 32, stride=(2, 2), kernel_size=(3, 3), padding=0)              
@@ -361,7 +361,8 @@ if torch.cuda.is_available():
 # %%Train Model
 
 if 'numbered_images' not in locals():    
-    numbered_images = get_numbered_images()
+    #numbered_images = get_numbered_images()
+    pass
 
 logging_interval = 10
 losses = []
@@ -432,11 +433,12 @@ for epoch in range(NUM_EPOCHS):
     
 # %%
 
+
 plt.figure(figsize=(10, 5))
 plt.title("Loss During Training")
-plt.plot(losses[:3000], label="L")
-plt.plot(kl_losses[:3000], label="KL")
-plt.plot(recon_losses[:3000], label="Recon")
+plt.plot(losses[:], label="L")
+plt.plot(kl_losses[:], label="KL")
+plt.plot(recon_losses[:], label="Recon")
 plt.xlabel("iterations")
 plt.ylabel("Loss")
 plt.legend()
@@ -452,7 +454,7 @@ checkpoint = {STATE_DICT : model.state_dict(),
 save_checkpoint(checkpoint, "cVAE4.pth.tar")
 
 # %%  Load Model
-load_checkpoint(torch.load("cVAE.pth.tar",map_location=(device)))
+losses,kl_losses,recon_losses = load_checkpoint(torch.load("cVAE4.pth.tar",map_location=(device)))
 
 
 # %%Plot latent space
@@ -523,7 +525,7 @@ if 'numbered_images' not in locals():
     numbered_images = get_numbered_images()
 
 
-c = 3
+c = 4
 with torch.no_grad():
     fig, axes = plt.subplots(nrows=2, ncols=1, sharex=True, sharey=True)
     #for batch_idx, (images, labels) in enumerate(example_loader):
@@ -540,11 +542,46 @@ with torch.no_grad():
     enc = enc.detach().to(torch.device('cpu'))
     
     #image from dataset
-    axes[0].imshow(enc.view((28, 28)))   
+    axes[0].imshow(numbered_images[c.item()][None, :].view((28, 28)))   
+    
+    #reconstructed
+    #axes[0].imshow(enc.view((28, 28))) 
     
     #image from decoder, caption
     axes[1].imshow(decoded.view((28, 28)))   
         
 
+
+#%% 
+num_classes=10
+iteration = 1
+
+d = {i:[] for i in range(num_classes)}
+
+with torch.no_grad():
+    for i, (features, targets) in enumerate(train_loader):
+
+        features = features.to(device)
+        targets = targets.to(device)
+        
+        embedding = model.encoding_fn(features)
+
+        for i in range(num_classes):
+            if i in targets:
+                mask = targets == i
+                d[i].append(embedding[mask].to('cpu').numpy())
+
+colors = list(mcolors.TABLEAU_COLORS.items())
+for i in range(num_classes):
+    d[i] = np.concatenate(d[i])
+    plt.scatter(
+        d[i][:, 0], d[i][:, 1],
+        #color=colors[i][1],
+        #label=f'{i}',
+        alpha=0.5)
+
+#plt.legend()
+#plt.savefig('latent_space/iteration'+str(iteration)+'.png')
+plt.figure().clear()
 
 

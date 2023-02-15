@@ -25,7 +25,7 @@ from mpl_toolkits.axes_grid1 import ImageGrid
 import math
 
 NUM_EPOCHS = 150
-LR = 0.0002
+LR = 0.0005
 LATENT_DIM = 100
 IMG_SIZE = 28
 CHANNELS = 1
@@ -127,7 +127,6 @@ def gen_image(c1=-1,randomLatent=True):
     with torch.no_grad():
         for image,_ in example_loader:
             f, axarr = plt.subplots(1)
-            
             if randomLatent:
                 latent = torch.rand_like(torch.Tensor(1,100))
             else:
@@ -176,12 +175,12 @@ def gen_images(c1=-1, c2=-1, w=round(random.uniform(0.1, 0.9)), randomLatent=Tru
             print("Supposed to be %d and %d" %(c1,c2))
             break        
         
-def discriminate_image(caption=-1,genOrReal=random.randint(0, 1)):
+def discriminate_image(caption=-1,genOrReal=0):#random.randint(0, 1)):
     generator.to('cpu')
     discriminator.to('cpu')
     
     with torch.no_grad():
-        for  i, (imgs, labels) in enumerate(example_loader):
+        for  i, (imgs, labels) in enumerate(train_loader):
             f, axarr = plt.subplots(1)
             
             fake_labels = build_fake_labels(labels.to(device))
@@ -194,7 +193,7 @@ def discriminate_image(caption=-1,genOrReal=random.randint(0, 1)):
             
             #feed discriminator fake image, expect "0" output
             if genOrReal == 0:
-                fake_image = generator(z,caption)
+                fake_image = generator(z,caption,caption)
                 axarr.imshow(fake_image[0].reshape(-1, 28, 28)[0])
                 pred = discriminator(fake_image,caption).detach()
                 print("Discriminator Prediction: {},Should be: {}, label = {}".format(pred,"0",caption))
@@ -213,16 +212,20 @@ def discriminate_image(caption=-1,genOrReal=random.randint(0, 1)):
 
 transform = transforms.Compose([
     transforms.ToTensor(),
-    transforms.Normalize([0.5], [0.5])
+    #transforms.Normalize([0.5], [0.5])
     ])
 
+transform2 = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize([0.5], [0.5])
+    ])
 
 train_dataset = torchvision.datasets.MNIST(
     root="~/torch_datasets", train=True, transform=transform, download=True
 )
 
 test_dataset = torchvision.datasets.MNIST(
-    root="~/torch_datasets", train=False, transform=transform, download=True
+    root="~/torch_datasets", train=False, transform=transform2, download=True
 )
 
 train_loader = data.DataLoader(
@@ -230,7 +233,8 @@ train_loader = data.DataLoader(
                                 batch_size=BATCH_SIZE,
                                 shuffle=False,
                                 num_workers=NUM_WORKERS,
-                                pin_memory=False
+                                pin_memory=False,
+                                drop_last=False
                                 )
 
 test_loader = data.DataLoader(
@@ -241,7 +245,7 @@ test_loader = data.DataLoader(
                                 )
 
 example_loader = data.DataLoader(
-                                train_dataset,
+                                test_dataset,
                                 batch_size=1,
                                 shuffle=True,
                                 num_workers=0,
@@ -271,7 +275,7 @@ class Discriminator(nn.Module):
         self.nfc2 = nn.Linear(164, 1)
 
     # oldWay flag to select between 2 train methods, not sure which is best yet
-    def forward(self, x, c, oldWay=False):
+    def forward(self, x, c):
 
         c = self.emb(c)
         c = self.emb_fc(c)
@@ -301,16 +305,18 @@ class Generator(nn.Module):
         self.conv = nn.Conv2d(16, 1, kernel_size=7)  # [n, 16, 34, 34]-> [n, 1, 28, 28]
         
         self.emb = nn.Embedding(10, 50) 
+        self.emb2 = nn.Embedding(10, 50) 
+
         
         self.label_lin = nn.Linear(50, 49)
         self.conv_x_c = nn.ConvTranspose2d(65, 64, 4, stride=2)  # upsample [65,7,7] -> [64,14,14]
         self.tanh = nn.Tanh()
 
-    def forward(self, x, c1, c2 = -1, w = round(random.uniform(0.1, 0.9), 1)):
+    def forward(self, x, c1, c2 = -1, w = round(random.uniform(0.0, 1), 1)):
         # Pass latent space input into linear layer and reshape
-        x = self.lin1(x)  # (n,100) -> (n,3187)
+        x = self.lin1(x)  # (n,100) -> (n,3087)
         x = F.leaky_relu(x)
-        x = x.view(-1, 63, 7, 7)  # (n,3187) -> (63,7,7)
+        x = x.view(-1, 63, 7, 7)  # (n,3087) -> (63,7,7)
         
        
         
@@ -320,7 +326,7 @@ class Generator(nn.Module):
         
        
         if type(c2) == torch.Tensor: 
-            c2 = self.emb(c2)
+            c2 = self.emb2(c2)
             c1 = c1[:,:math.floor(c1.size(1) - c1.size(1)*w)]  # slice tensor depending on w
             c2 = c2[:,:math.floor(c2.size(1) - c2.size(1)*(1-w))]
             c = torch.cat((c1, c2), 1)
@@ -335,7 +341,7 @@ class Generator(nn.Module):
         c = c.view(-1, 1, 7, 7)  # (n,49) -> (n,1,7,7)
         x = torch.cat((c, x), 1) # concat image[63,7,7] with text [1,7,7]
         
-        x = self.ct1(x)  # [n, 64, 16, 16] [32,34,34]
+        x = self.ct1(x)  
         x = F.leaky_relu(x)
 
         # Upsample to 34x34 (16 feature maps)
@@ -349,7 +355,7 @@ class Generator(nn.Module):
     
 # %% Loss fucntion, optimizers
 loss_func = nn.BCELoss()
-d_loss_func = nn.BCELoss()
+#d_loss_func = nn.BCELoss()
 
 # Initialize generator and discriminator
 generator = Generator().to(device)
@@ -368,15 +374,20 @@ Tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTen
 
 # %% Train Both models
 
-img_list = []
-
-if 'G_losses' not in locals() and 'D_losses' not in locals():
+if 'G_losses' not in locals() or 1 == 2:
     G_losses = []
     D_losses = []
+    
+    real_losses = []
+    fake_losses = []
+    wr_losses = []
+    
+    gen_losses= []
+    int_losses= []
+    
+    iters = 0
+logging_interval = 30
 
-
-if 'iters' not in locals():
-  iters = 0
   
 if torch.cuda.is_available():
     generator.cuda()
@@ -401,7 +412,7 @@ if __name__ == '__main__':
             fake = Variable(Tensor(imgs.size(0), 1).fill_(0.0), requires_grad=False)
             
             # Sample noise as generator input
-            z = Variable(Tensor(np.random.normal(0, 1, (imgs.shape[0], LATENT_DIM))))
+            z = torch.rand_like(torch.Tensor(BATCH_SIZE,LATENT_DIM)).to(device)
     
             # transform to tensor [256,1,28,28]
             real_imgs = Variable(imgs.type(Tensor))
@@ -418,7 +429,7 @@ if __name__ == '__main__':
 
             # Generate fake images
             gen_imgs = generator(z,labels)
-            int_imgs = generator(z,labels,fake_labels)
+            int_imgs = generator(z,labels,fake_labels)# Why do i use this loss for generator?
             
             # Calculate D's loss on the all-fake batch
             fake_pred = discriminator(gen_imgs.detach(),labels.detach())
@@ -434,8 +445,7 @@ if __name__ == '__main__':
             fake_loss.backward()
      
             D_x = real_pred.mean().item()
-            D_G_z1 = fake_pred.mean().item()
-            d_loss = (fake_pred + real_pred + wr_pred)/2
+            d_loss = (fake_pred + real_pred + wr_pred)/3
             optimizer_D.step()
            
             # -----------------
@@ -453,38 +463,64 @@ if __name__ == '__main__':
             g_loss = (gen_imgs_loss + int_imgs_loss)/2
            
             
-            D_G_z2 = fake_pred.mean().item()
             optimizer_G.step()
+            
+            
+            real_loss_item = real_loss.item()
+            fake_loss_item = fake_loss.item()
+            wr_loss_item = wr_loss.item()
+            
+            int_loss_item = int_imgs_loss.item()
+            gen_loss_item = gen_imgs_loss.item()
+            
+            
+            d_loss_item = d_loss.mean().item()
+            g_loss_item = g_loss.item()
 
-        
-           # Output training stats
-            if i % 50 == 0:
-                print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f tD(x): %.4f tD(G(z)): %.4f / %.4f'
-                      % (epoch, NUM_EPOCHS, i, len(train_loader),d_loss.mean().item(), g_loss.item(), D_x, D_G_z1, D_G_z2))
+            
+            # Output training stats
+            if iters % logging_interval == 0:
+                print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G:( GEN %.4f , INT %.4f )tD(x): %.4f tD(G(z)): %.4f / %.4f / %.4f'
+                      % (epoch, NUM_EPOCHS, i, len(train_loader),d_loss_item,gen_loss_item,int_loss_item  , D_x, real_loss_item, fake_loss_item , wr_loss_item))
 
+            
             # Save Losses for plotting later
-            G_losses.append(g_loss.item())
-            D_losses.append(d_loss.mean().item())
-
-            # Check how the generator is doing by saving G's output on fixed_noise
-            if (iters % 500 == 0) or ((epoch == NUM_EPOCHS-1) and (i == len(train_loader)-1)):
-                with torch.no_grad():
-                    fake = generator(z,labels).detach().cpu()
-                    img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
+            G_losses.append(g_loss_item)
+            D_losses.append(d_loss_item)
+            
+            
+            gen_losses.append(gen_loss_item)
+            int_losses.append(int_loss_item)
+            
+            real_losses.append(real_loss_item)
+            fake_losses.append(fake_loss_item)
+            wr_losses.append(wr_loss_item)
  
             iters += 1        
     
 
 # %% Plot Losses
 
-plt.figure(figsize=(11,5))
-plt.title("Generator and Discriminator Loss During Training")
-plt.plot(G_losses,label="G")
-plt.plot(D_losses,label="D")
+
+plt.figure(figsize=(10, 5))
+plt.title("Loss During Training")
+
+plt.plot(G_losses[:], label="G_losses")
+plt.plot(D_losses[:], label="D_losses")
+
+#plt.plot(real_losses[:], label="real_losses")
+#plt.plot(fake_losses[:], label="fake_losses")
+#plt.plot(wr_losses[:], label="wr_losses")
+
+#plt.plot(gen_losses[:], label="gen_losses")
+#plt.plot(int_losses[:], label="int_losses")
+
+
 plt.xlabel("iterations")
 plt.ylabel("Loss")
 plt.legend()
 plt.show()
+
     
 # %% Save Model
 checkpoint = {GEN_STATE_DICT : generator.state_dict(), 
@@ -492,11 +528,16 @@ checkpoint = {GEN_STATE_DICT : generator.state_dict(),
               DISC_STATE_DICT : discriminator.state_dict(),
               DISC_OPTIMIZER : optimizer_D.state_dict(),
               G_LOSSES : G_losses,
-              D_LOSSES : D_losses}
-save_checkpoint(checkpoint, "cond_gan_pytorch11-1.pth.tar")
+              D_LOSSES : D_losses,
+              "real_losses" : real_losses,
+              "fake_losses":fake_losses,
+              "wr_losses":wr_losses,
+              "gen_losses":gen_losses,
+              "int_losses":int_losses}
+save_checkpoint(checkpoint, "cond_gan_pytorch14.pth.tar")
 
 # %%  Load Model
-load_checkpoint(torch.load("cond_gan_pytorch11.pth.tar",map_location=(device)))
+load_checkpoint(torch.load("cond_gan_pytorch14.pth.tar",map_location=(device)))
 
 
 # %%
@@ -523,11 +564,11 @@ with torch.no_grad():
 
 # %%
 
-c1 = 1
+c1 = 4
 c2 = 1
 w = 0.5
 
-randomLatent = False
+randomLatent = True
 
 generator.to('cpu')
 discriminator.to('cpu')
@@ -549,6 +590,8 @@ with torch.no_grad():
 
          
         fake_image = generator(latent,torch.tensor([c1]), torch.tensor([c2]),w)  
+        #fake_image = generator(latent,torch.tensor([c1]),-1,w)  
+
        
         
         #axarr.imshow(add_noise(image[0][0],0.5))    
@@ -557,4 +600,41 @@ with torch.no_grad():
         break        
     
 
+# %%
+caption= 1
+caption2 = 1
+genOrReal=0
 
+generator.to('cpu')
+discriminator.to('cpu')
+
+with torch.no_grad():
+    for  i, (imgs, labels) in enumerate(train_loader):
+        f, axarr = plt.subplots(1)
+        
+        fake_labels = build_fake_labels(labels.to(device))
+        labels = labels.to('cpu')
+        z = torch.rand_like(torch.Tensor(1,LATENT_DIM)).to('cpu')
+        if caption == -1:
+            caption = random.randint(0, 9)
+            
+        
+        caption = torch.tensor(caption, dtype=torch.int64)[None]
+        caption2 = torch.tensor(caption2, dtype=torch.int64)[None]
+        
+        
+        #feed discriminator fake image, expect "0" output
+        if genOrReal == 0:
+            fake_image = generator(z,caption,caption2)
+            axarr.imshow(fake_image[0].reshape(-1, 28, 28)[0])
+            pred = discriminator(fake_image,caption).detach()
+            print("Discriminator Prediction: {},Should be: {}, label = {}".format(pred,"0",caption.item()))
+        #feed discriminator real image, expect "1" output
+        else:
+            fake_image = generator(z,labels[0])
+            axarr.imshow(imgs[0].reshape(-1, 28, 28)[0])
+            pred = discriminator(imgs.detach(),labels[0].detach()).detach()
+            print("Discriminator Prediction: {},Should be: {}, label= {}".format(pred,"1",labels[0]+1))
+        
+
+        break        

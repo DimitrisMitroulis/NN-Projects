@@ -131,7 +131,7 @@ def gen_image(caption=-1,randomLatent=True):
             print("Supposed to be %d" %caption.item())
             break
         
-def discriminate_image(caption=-1,genOrReal=random.randint(0, 1)):
+def discriminate_image(caption=-1,genOrReal=0):#random.randint(0, 1)):
     generator.to('cpu')
     discriminator.to('cpu')
     
@@ -410,7 +410,7 @@ checkpoint = {GEN_STATE_DICT : generator.state_dict(),
 save_checkpoint(checkpoint, "cond_gan_pytorch10.pth.tar")
 
 # %%  Load Model
-load_checkpoint(torch.load("cond_gan_pytorch10.pth.tar",map_location=(device)))
+load_checkpoint(torch.load("cond_gan_pytorch6.pth.tar",map_location=(device)))
 
 
 # %%
@@ -448,9 +448,8 @@ with torch.no_grad():
     t1 = 1
     t2 = 3
     w = 0.5
-    t1 = torch.tensor(t1, dtype=torch.int64).to
-    t2 = torch.tensor(t2, dtype=torch.int64)
+    t1 = torch.tensor(t1, dtype=torch.int64)
     z = Variable(Tensor(np.random.normal(0, 1, (1,LATENT_DIM))))
-    gen_imgs = generator(z,t1,t2)
+    gen_imgs = generator(z,t1)
 
 
