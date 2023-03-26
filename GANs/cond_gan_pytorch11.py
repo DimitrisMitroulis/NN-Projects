@@ -23,6 +23,7 @@ import torchvision.utils as vutils
 from  torch.utils import data
 from mpl_toolkits.axes_grid1 import ImageGrid
 import math
+import statistics
 
 NUM_EPOCHS = 150
 LR = 0.0005
@@ -69,6 +70,28 @@ print('Device:{}'.format(device))
 
 # %% helper funcitons
 
+# this func is designed for a specific problem of sampling but the sampled array 
+# has the same size as the original, allowing it to be plotted in the same plot  
+def sample_list(array,sample_every=5):
+    temp_list = []
+    sampled_list = []
+    
+    
+    for i,loss in enumerate(array):
+        temp_list.append(loss)
+        
+        # every x points take average
+        if i%sample_every ==0 and i != 0:
+            mean = statistics.mean(temp_list)
+            
+            #for each element in temp_list 
+            for j,element in enumerate(temp_list):
+                sampled_list.append(mean)
+            
+            temp_list = []
+    
+    return sampled_list
+
 
 def save_checkpoint(state, filename):
     print("=> Saving chekpoint")
@@ -80,25 +103,6 @@ def load_checkpoint(checkpoint):
     optimizer_G.load_state_dict(checkpoint[GEN_OPTIMIZER])
     discriminator.load_state_dict(checkpoint[DISC_STATE_DICT])
     optimizer_D.load_state_dict(checkpoint[DISC_OPTIMIZER])
-    if 'G_losses' in locals() and 'D_losses' in locals():
-        G_losses.load_state_dict(checkpoint[G_LOSSES])
-        D_losses.load_state_dict(checkpoint[D_LOSSES])
-    
-
-
-# takes input tensor and return a tensor of same size but every element has different value
-def build_fake_labels(old_list):
-  
-    new_list = []
-
-    for i, x in enumerate(old_list):
-
-        if (i % 10) != x:
-            new_list.append(i % 10)
-        else:
-            new_list.append((x.item()+1) % 10)
-
-    return torch.tensor(new_list, dtype=torch.int64).to(device)
 
 
 def add_noise(inputs, variance):
@@ -138,7 +142,7 @@ def gen_image(c1=-1,randomLatent=True):
             
             
             c1 = torch.tensor(c1, dtype=torch.int64)
-            fake_image = generator(latent,c1)  
+            fake_image,_ = generator(latent,c1)  
            
             
             #axarr.imshow(add_noise(image[0][0],0.5))    
@@ -166,7 +170,7 @@ def gen_images(c1=-1, c2=-1, w=round(random.uniform(0.1, 0.9)), randomLatent=Tru
                 c2 = random.randint(0, 9)
 
               
-            fake_image = generator(latent,torch.tensor([c1]), torch.tensor([c2]),w)  
+            fake_image,_ = generator(latent,torch.tensor([c1]), torch.tensor([c2]),w)  
             
            
             
@@ -206,6 +210,24 @@ def discriminate_image(caption=-1,genOrReal=0):#random.randint(0, 1)):
             
     
             break        
+
+def grid_of_interpolated_images():
+    generator.to('cpu')
+    discriminator.to('cpu')
+    
+    with torch.no_grad():
+        
+        
+        fig, axes = plt.subplots(nrows=10, ncols=10,figsize=(20, 20), sharex=True, sharey=True)  
+        
+        for i in range(10):
+            for y in range(10):    
+                latent = torch.rand_like(torch.Tensor(1,100))
+                fake_image,_ = generator(latent,torch.tensor([i]), torch.tensor([y]),w=0.5)  
+                axes[i][y].imshow(fake_image[0][0]) 
+       
+    
+
 
 
 # %%train data
@@ -274,10 +296,12 @@ class Discriminator(nn.Module):
         self.nfc1 = nn.Linear(1152, 164)
         self.nfc2 = nn.Linear(164, 1)
 
-    # oldWay flag to select between 2 train methods, not sure which is best yet
-    def forward(self, x, c):
+    def forward(self, x, c,t3 =-1):
 
-        c = self.emb(c)
+        if  type(t3) == int:
+            c = self.emb(c)
+        else:
+            c = t3
         c = self.emb_fc(c)
         c = c.view(-1, 1, 28, 28)
         x = torch.cat((c, x), 1)  # concat image[1,28,28] with text [1,28,28]
@@ -336,7 +360,7 @@ class Generator(nn.Module):
             pass
 
        
-        
+        t3 = c
         c = self.label_lin(c)  # (n,50) -> (n,49)
         c = c.view(-1, 1, 7, 7)  # (n,49) -> (n,1,7,7)
         x = torch.cat((c, x), 1) # concat image[63,7,7] with text [1,7,7]
@@ -350,7 +374,7 @@ class Generator(nn.Module):
 
         # Convolution to 28x28 (1 feature map)
         x = self.tanh(self.conv(x))
-        return x
+        return x,t3
     
     
 # %% Loss fucntion, optimizers
@@ -370,6 +394,7 @@ optimizer_G = torch.optim.Adam(generator.parameters(), lr=LR,betas=(B1 ,B2))
 optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=LR,betas=(B1 ,B2))
 
 Tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor   
+
 
 
 # %% Train Both models
@@ -428,8 +453,8 @@ if __name__ == '__main__':
             wr_loss = loss_func(wr_pred, fake)
 
             # Generate fake images
-            gen_imgs = generator(z,labels)
-            int_imgs = generator(z,labels,fake_labels)# Why do i use this loss for generator?
+            gen_imgs,_ = generator(z,labels)
+            int_imgs,t3 = generator(z,labels,fake_labels)# Why do i use this loss for generator?
             
             # Calculate D's loss on the all-fake batch
             fake_pred = discriminator(gen_imgs.detach(),labels.detach())
@@ -453,7 +478,7 @@ if __name__ == '__main__':
             # -----------------
             optimizer_G.zero_grad()
             fake_pred = discriminator(gen_imgs,labels)
-            int_pred = discriminator(int_imgs,labels)
+            int_pred = discriminator(int_imgs,labels,t3)
             
             gen_imgs_loss = loss_func(fake_pred, valid)
             int_imgs_loss = loss_func(int_pred, valid)
@@ -505,8 +530,12 @@ if __name__ == '__main__':
 plt.figure(figsize=(10, 5))
 plt.title("Loss During Training")
 
+
+
 plt.plot(G_losses[:], label="G_losses")
 plt.plot(D_losses[:], label="D_losses")
+#plt.plot(sampled_list[:], label="sampled")
+
 
 #plt.plot(real_losses[:], label="real_losses")
 #plt.plot(fake_losses[:], label="fake_losses")
@@ -638,3 +667,30 @@ with torch.no_grad():
         
 
         break        
+
+
+#%% 
+
+
+                
+
+generator.to('cpu')
+discriminator.to('cpu')
+
+with torch.no_grad():
+    
+    
+    fig, axes = plt.subplots(nrows=10, ncols=10,figsize=(20, 20), sharex=True, sharey=True)  
+    
+    for i in range(10):
+        for y in range(10):    
+            latent = torch.rand_like(torch.Tensor(1,100))
+            fake_image,_ = generator(latent,torch.tensor([i]), torch.tensor([y]),w=0.9)  
+            axes[i][y].imshow(fake_image[0][0]) 
+   
+
+
+
+
+
+#%% 
