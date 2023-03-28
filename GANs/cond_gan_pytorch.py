@@ -524,7 +524,7 @@ with torch.no_grad():
     discriminator.to('cpu')
     
     for i, (imgs,_) in enumerate(train_loader):
-        real_images = imgs
+        #real_images = imgs
         
         caption = random.randint(0, 9)   
         caption = torch.tensor(caption, dtype=torch.int64)
@@ -546,37 +546,59 @@ with torch.no_grad():
         break
     
     fake_images = fake_images[:2000,:,:,:]
+    
+    #real_images = real_images[:2000,:,:,:]
 
 #%%
-from collections import OrderedDict
+from torchvision.models import inception_v3
+import torch
+from torchvision.datasets import MNIST
+from torchvision.transforms import ToTensor, Normalize
+from torch.utils.data import DataLoader
+from torchvision.models import inception_v3
+from scipy import linalg
+import numpy as np
 
-def eval_step(engine, batch):
-    return batch
+fake_images = torch.cat([fake_images, fake_images, fake_images], dim=1)
+fake_images = transforms.Compose([
+    transforms.Resize((299, 299)),
+    transforms.Grayscale(num_output_channels=3),
+])(fake_images)
 
-default_evaluator = Engine(eval_step)
 
-# create default optimizer for doctests
 
-param_tensor = torch.zeros([1], requires_grad=True)
-default_optimizer = torch.optim.SGD([param_tensor], lr=0.1)
+# load a pre-trained Inception-v3 model
+inception_model = inception_v3(pretrained=True, aux_logits=True,)
+inception_model.to(device)
+inception_model.eval()
 
-def get_default_trainer():
+# compute the feature representations of the real and fake images
+real_features = []
+fake_features = []
+for batch in train_loader:
+    images, _ = batch
+    images = images.to(device)
+    with torch.no_grad():
+        images = torch.cat([images,images,images],dim=1)
+        images = transforms.Compose([
+            transforms.Resize((299, 299)),
+            transforms.Grayscale(num_output_channels=3),
+        ])(images)
+        
+        features = inception_model(images)[0].view(images.size(0), -1)
+    real_features.append(features.cpu().numpy())
+with torch.no_grad():
+    features = inception_model(fake_images)[0].view(fake_images.size(0), -1)
+fake_features.append(features.cpu().numpy())
 
-    def train_step(engine, batch):
-        return batch
+# calculate the mean and covariance of the feature representations
+real_features = np.concatenate(real_features, axis=0)
+fake_features = np.concatenate(fake_features, axis=0)
+mu1, sigma1 = np.mean(real_features, axis=0), np.cov(real_features, rowvar=False)
+mu2, sigma2 = np.mean(fake_features, axis=0), np.cov(fake_features, rowvar=False)
 
-    return Engine(train_step)
-
-default_model = nn.Sequential(OrderedDict([
-    ('base', nn.Linear(28, 2)),
-    ('fc', nn.Linear(2, 1))
-]))
-
-manual_seed(666)
-
-metric = FID(num_features=1, feature_extractor=default_model)
-metric.attach(default_evaluator, "fid")
-y_true = real_images[0][0]
-y_pred = fake_images[0][0]
-state = default_evaluator.run([[y_pred, y_true]])
-print("FID:",state.metrics["fid"])
+# calculate the FID score
+mu_diff = mu1 - mu2
+sigma_diff_sqrt = linalg.sqrtm(sigma1 @ sigma2)
+fid_score = np.real(np.trace(sigma1 + sigma2 - 2*sigma_diff_sqrt)) + np.dot(mu_diff, mu_diff)
+print(f'FID score: {fid_score:.2f}')
