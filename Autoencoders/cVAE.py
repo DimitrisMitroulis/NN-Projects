@@ -15,10 +15,12 @@ from  torch.utils import data
 from mpl_toolkits.axes_grid1 import ImageGrid
 import matplotlib.colors as mcolors
 import os
+import gc
 
-NUM_EPOCHS = 150
+
+NUM_EPOCHS = 60
 LR = 0.0008
-LATENT_DIM = 100
+LATENT_SPACE_SIZE = 20
 IMG_SIZE = 28
 CHANNELS = 1
 B1 = 0.5
@@ -138,7 +140,7 @@ def plot_generated_images(c, figsize=(20, 2.5), n_images=10):
             ax[i].imshow(curr_img.view((28, 28)))
             
             
-def plot_numberred_images(iteration,numbered_images,figsize=(20, 2.5)):
+def plot_numberred_images(numbered_images,figsize=(20, 2.5)):
 
     with torch.no_grad(): 
         fig, axes = plt.subplots(nrows=2, ncols=10, 
@@ -152,7 +154,7 @@ def plot_numberred_images(iteration,numbered_images,figsize=(20, 2.5)):
             axes[0][i].imshow(numbered_images[i].view((28, 28))) 
             axes[1][i].imshow(gen_img.view((28, 28)))
         
-        #plt.savefig('numbered_images/'+str(iteration)+'.png')
+        plt.savefig('varying_latent_space/latent_space'+str(LATENT_SPACE_SIZE)+'.png')
         plt.figure().clear()
             
 def plot_image(c):
@@ -167,8 +169,20 @@ def plot_image(c):
         decoded = model.decoder(latent,c).detach().to(torch.device('cpu'))
         axes.imshow(decoded.view((28, 28)))   
         
-
-
+#plot a grid of r,c images,reccomended with 10,10
+def plot_many_images(r=10,c=10):
+    fig, axes = plt.subplots(nrows=r, ncols=c,figsize=(20, 20), sharex=True, sharey=True)
+    
+    for i in range(r):
+        for y in range(c):
+            caption = torch.tensor(y, dtype=torch.int64).to(device)
+            latent = torch.rand_like(torch.Tensor(LATENT_SPACE_SIZE)).to(device)
+    
+            decoded = model.decoder(latent,caption).detach().to(torch.device('cpu'))
+            axes[i][y].imshow(decoded.view((28, 28)))   
+    
+    plt.savefig('varying_latent_space/latent_size'+str(LATENT_SPACE_SIZE)+'.png')
+    plt.figure().clear()
 
 
 def plot_latent_space_with_labels(iteration, num_classes=10):
@@ -199,6 +213,24 @@ def plot_latent_space_with_labels(iteration, num_classes=10):
     #plt.legend()
     #plt.savefig('latent_space/iteration'+str(iteration)+'.png')
     plt.figure().clear()
+
+
+def plot_losses():
+    plt.figure(figsize=(10, 5))
+    plt.title("Loss During Training")
+    plt.plot(losses[:], label="L")
+    plt.plot(kl_losses[:], label="KL")
+    plt.plot(recon_losses[:], label="Recon")
+    plt.xlabel("iterations")
+    plt.ylabel("Loss")
+    
+    plt.savefig('varying_plot_losses/latent_size'+str(LATENT_SPACE_SIZE)+'.png')
+    plt.figure().clear()
+    
+def clear_cache():
+    torch.cuda.empty_cache()
+    gc.collect()
+    
 
 
 # %%Train Data
@@ -361,18 +393,11 @@ if torch.cuda.is_available():
 # %%Train Model
 
 if 'numbered_images' not in locals():    
-    #numbered_images = get_numbered_images()
-    pass
+   #numbered_images = get_numbered_images()
+   pass
 
-logging_interval = 10
-losses = []
-kl_losses = []
-recon_losses = []
-recon_loss = 0
-kl_div = 0
-iter = 0
-alpha = 1
 
+latent_size_spaces = [2,5,20,50,200,500,2000]
 
 if torch.cuda.is_available():
     model = model.to(memory_format=torch.channels_last)
@@ -380,65 +405,93 @@ if torch.cuda.is_available():
     model.train()
     torch.backends.cudnn.benchmark = True
     
-   
-for epoch in range(NUM_EPOCHS):
-    st = time.time()
-    for batch, (imgs, labels) in enumerate(train_loader):
+for late_size in latent_size_spaces:
+    LATENT_SPACE_SIZE = late_size
+    model = VAE()
+         
+    # Validation using MSE Loss function
+    loss_function = nn.MSELoss(reduction='none')
 
-        imgs = imgs.to(device,memory_format=torch.channels_last)
-        labels = labels.to(device)
+    #Adam Optimizer with lr = 0.1
+    optimizer = torch.optim.Adam(model.parameters(), lr=LR, betas=(B1 ,B2))
+    #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
 
-        # set gradients to zero
-        optimizer.zero_grad()
+    logging_interval = 10
+    losses = []
+    kl_losses = []
+    recon_losses = []
+    recon_loss = 0
+    kl_div = 0
+    iter = 0
+    alpha = 1
 
-        encoded, z_mean, z_log_var, decoded = model(imgs,labels)
-
-        # Total Loss = Recon_loss + KLDivergence
-        kl_div = -0.5 * torch.sum(1 + z_log_var 
-                                  - z_mean**2 
-                                  - torch.exp(z_log_var), 
-                                  axis=1) # sum over latent dimension
-
-        kl_div = kl_div.mean()
-
-        recon_loss = loss_function(decoded, imgs)
-        recon_loss = recon_loss.view(BATCH_SIZE, -1).sum(axis=1) # sum over pixels
-        recon_loss = recon_loss.mean() # average over batch dimension
+    if torch.cuda.is_available():
+        model.cuda()
+        loss_function.cuda()
         
-        loss = alpha*recon_loss + kl_div
-        loss.backward()
-        
-        
-        optimizer.step()  # Updates Weights
-        
-        loss_item = loss.item()
-        recon_loss_item = recon_loss.item()
-        kl_div_item = kl_div.item()
-        
-        #scheduler.step()
-        
-        
-        if iter % logging_interval == 0:
-            print('[%d/%d][%d/%d]\t, LOSS:%.4f (recon_loss : %.4f, kl_loss = %.6f'
-                  %(epoch, NUM_EPOCHS, batch, len(train_loader), loss_item, recon_loss_item, kl_div_item))
-            #plot_numberred_images(iter*BATCH_SIZE,numbered_images)
-        
-       
-        losses.append(loss_item)
-        kl_losses.append(kl_div_item)
-        recon_losses.append(recon_loss_item)
-        
-        iter +=1
-     
+    for epoch in range(4):
+        st = time.time()
+        for batch, (imgs, labels) in enumerate(train_loader):
     
+            imgs = imgs.to(device,memory_format=torch.channels_last)
+            labels = labels.to(device)
+    
+            # set gradients to zero
+            optimizer.zero_grad()
+    
+            encoded, z_mean, z_log_var, decoded = model(imgs,labels)
+    
+            # Total Loss = Recon_loss + KLDivergence
+            kl_div = -0.5 * torch.sum(1 + z_log_var 
+                                      - z_mean**2 
+                                      - torch.exp(z_log_var), 
+                                      axis=1) # sum over latent dimension
+    
+            kl_div = kl_div.mean()
+    
+            recon_loss = loss_function(decoded, imgs)
+            recon_loss = recon_loss.view(BATCH_SIZE, -1).sum(axis=1) # sum over pixels
+            recon_loss = recon_loss.mean() # average over batch dimension
+            
+            loss = alpha*recon_loss + kl_div
+            loss.backward()
+            
+            
+            optimizer.step()  # Updates Weights
+            
+            loss_item = loss.item()
+            recon_loss_item = recon_loss.item()
+            kl_div_item = kl_div.item()
+            
+            #scheduler.step()
+            
+            
+            if iter % logging_interval == 0:
+                print('[%d/%d][%d/%d]\t, LOSS:%.4f (recon_loss : %.4f, kl_loss = %.6f'
+                      %(epoch, NUM_EPOCHS, batch, len(train_loader), loss_item, recon_loss_item, kl_div_item))
+                #plot_numberred_images(iter*BATCH_SIZE,numbered_images)
+            
+           
+            losses.append(loss_item)
+            kl_losses.append(kl_div_item)
+            recon_losses.append(recon_loss_item)
+            
+            iter +=1
+    
+    plot_many_images()     
+    plot_losses()
+    print('----------------------RESTARTING--------------------')
+    print(time.time()-st)
+     
+            
 # %%
 
 
 plt.figure(figsize=(10, 5))
 plt.title("Loss During Training")
-plt.plot(losses[:], label="L")
-plt.plot(kl_losses[:], label="KL")
-plt.plot(recon_losses[:], label="Recon")
+plt.plot(losses[:600], label="L")
+plt.plot(kl_losses[:600], label="KL")
+plt.plot(recon_losses[:600], label="Recon")
 plt.xlabel("iterations")
 plt.ylabel("Loss")
 plt.legend()
@@ -455,65 +508,7 @@ save_checkpoint(checkpoint, "cVAE4.pth.tar")
 
 # %%  Load Model
 losses,kl_losses,recon_losses = load_checkpoint(torch.load("cVAE4.pth.tar",map_location=(device)))
-
-
-# %%Plot latent space
-num_classes = 1
-device
-
-d = {i:[] for i in range(num_classes)}
-with torch.no_grad():
-    for i, (images,labels) in enumerate(train_loader):
-        images = images.to(device)
-        labels = labels.to(device)
-
-        embedding = model.encoding_fn(images)
-        for i in range(num_classes):
-            if i in labels:
-                mask = labels == 1
-                d[i].append(embedding[mask].to('cpu').numpy())
-        
-        colors = list(mcolors.TABLEAU_COLORS.items())
-        for  i in range(num_classes):
-            d[i] = np.concatenate(d[i])
-            plt.scatter(
-                d[i][: , 0],d[i][:, 1],
-                color=colors[i][1],
-                label=f'{i}',
-                alpha=0.5)
-        plt.legend()
-
-
-plt.legend()
-plt.show()
-
-
-# %%
-if 'numbered_images' not in locals():
-    numbered_images = get_numbered_images()
-
-with torch.no_grad(): 
-    decoded_images = []
-    model.to(device)
-
-    n_images = 10
-
-    fig, axes = plt.subplots(nrows=2, ncols=n_images, 
-                             sharex=True, sharey=True, figsize=(20, 2.5))
-    
-    for i in range(len(numbered_images)): 
-                 
-        image = numbered_images[i].to(device)
-                 
-        _,_,_,output = model(image[None, :])
-                                   
-        decoded_images.append(output[0])
-    
-    
-    for i in range(n_images):
-        for ax, img in zip(axes, [numbered_images, decoded_images]):
-            curr_img = img[i].detach().to(torch.device('cpu'))
-            ax[i].imshow(curr_img.view((28, 28)))            
+            
 
 # %%
 # Keep latent noise the same to get same results
@@ -527,7 +522,7 @@ if 'numbered_images' not in locals():
 
 c = 4
 with torch.no_grad():
-    fig, axes = plt.subplots(nrows=2, ncols=1, sharex=True, sharey=True)
+    fig, axes = plt.subplots(nrows=3, ncols=1, sharex=True, sharey=True)
     #for batch_idx, (images, labels) in enumerate(example_loader):
     
     c = torch.tensor(c, dtype=torch.int64).to(device)
@@ -545,14 +540,12 @@ with torch.no_grad():
     axes[0].imshow(numbered_images[c.item()][None, :].view((28, 28)))   
     
     #reconstructed
-    #axes[0].imshow(enc.view((28, 28))) 
+    axes[1].imshow(enc.view((28, 28))) 
     
     #image from decoder, caption
-    axes[1].imshow(decoded.view((28, 28)))   
+    axes[2].imshow(decoded.view((28, 28)))   
         
-
-
-#%% 
+#%%
 num_classes=10
 iteration = 1
 
@@ -582,6 +575,9 @@ for i in range(num_classes):
 
 #plt.legend()
 #plt.savefig('latent_space/iteration'+str(iteration)+'.png')
-plt.figure().clear()
+plt.figure().clear
+
+
+
 
 

@@ -22,6 +22,16 @@ import random
 import torchvision.utils as vutils
 from  torch.utils import data
 from mpl_toolkits.axes_grid1 import ImageGrid
+from ignite.metrics import FID
+
+from ignite.engine import *
+from ignite.handlers import *
+from ignite.metrics import *
+from ignite.utils import *
+from ignite.contrib.metrics.regression import *
+from ignite.contrib.metrics import *
+from collections import OrderedDict
+
 
 
 NUM_EPOCHS = 150
@@ -45,7 +55,7 @@ D_LOSSES = "d_losses"
 SHUFFLE = True
 PIN_MEMORY = True
 NUM_WORKERS = 0
-BATCH_SIZE = 750
+BATCH_SIZE = 2000
 
 specific_latent = torch.tensor([[0.7628, 0.1779, 0.3978, 0.3606, 0.6387,
          0.3044, 0.8340, 0.3884, 0.9313, 0.5635, 0.1994, 0.6934, 0.5326,
@@ -81,9 +91,8 @@ def load_checkpoint(checkpoint):
     optimizer_G.load_state_dict(checkpoint[GEN_OPTIMIZER])
     discriminator.load_state_dict(checkpoint[DISC_STATE_DICT])
     optimizer_D.load_state_dict(checkpoint[DISC_OPTIMIZER])
-    if 'G_losses' in locals() and 'D_losses' in locals():
-        G_losses.load_state_dict(checkpoint[G_LOSSES])
-        D_losses.load_state_dict(checkpoint[D_LOSSES])
+    G_losses = checkpoint[G_LOSSES]
+    D_losses = checkpoint[D_LOSSES]
     
 
 
@@ -111,7 +120,7 @@ def gen_image(caption=-1,randomLatent=True):
     discriminator.to('cpu')
 
     with torch.no_grad():
-        for image,_ in example_loader:
+        for image,_ in train_loader:
             f, axarr = plt.subplots(1)
             
             if randomLatent:
@@ -129,6 +138,7 @@ def gen_image(caption=-1,randomLatent=True):
             #axarr.imshow(add_noise(image[0][0],0.5))    
             axarr.imshow(fake_image[0][0])   
             print("Supposed to be %d" %caption.item())
+    
             break
         
 def discriminate_image(caption=-1,genOrReal=0):#random.randint(0, 1)):
@@ -410,7 +420,7 @@ checkpoint = {GEN_STATE_DICT : generator.state_dict(),
 save_checkpoint(checkpoint, "cond_gan_pytorch10.pth.tar")
 
 # %%  Load Model
-load_checkpoint(torch.load("cond_gan_pytorch6.pth.tar",map_location=(device)))
+load_checkpoint(torch.load("cond_gan_pytorch11.pth.tar",map_location=(device)))
 
 
 # %%
@@ -453,3 +463,120 @@ with torch.no_grad():
     gen_imgs = generator(z,t1)
 
 
+# %%
+with torch.no_grad():
+    generator.to('cpu')
+    discriminator.to('cpu')
+
+    for i,(images,_) in enumerate(train_loader):   
+        for j,(image) in enumerate(images):
+                    
+            f, axarr = plt.subplots(1)
+            plt.axis('off') # turn off the axis
+            plt.tick_params(axis='both', which='both', length=0) # remove the ticks
+
+            latent = torch.rand_like(torch.Tensor(1,100))
+        
+            axarr.imshow(image[0])
+               
+            plt.savefig('actual_images/'+str(i)+'image'+str(j)+'.png')
+            plt.figure().clear()
+        
+        
+        if (i >= 4):
+            break
+            
+# %% Remove white pixels from images
+from PIL import Image
+import numpy as np
+
+
+for i in range(5):
+    for j in range(750):
+    
+        img_name = 'gen_images/'+str(i)+'image'+str(j)+'.png'
+        # open the image
+        img = Image.open(img_name)
+        
+        # convert the image to numpy array
+        img_array = np.asarray(img)
+        
+        # get the indices of non-white pixels
+        non_white_indices = np.argwhere(img_array < 255)
+        
+        # get the bounding box of non-white pixels
+        bbox = np.min(non_white_indices, axis=0), np.max(non_white_indices, axis=0)
+        
+        # crop the image
+        cropped_img = img.crop((bbox[0][1], bbox[0][0], bbox[1][1], bbox[1][0]))
+        
+        # save the cropped image
+        cropped_img.save(img_name)
+
+
+
+# %%
+
+fake_images = []
+real_images = []
+with torch.no_grad():
+    generator.to('cpu')
+    discriminator.to('cpu')
+    
+    for i, (imgs,_) in enumerate(train_loader):
+        real_images = imgs
+        
+        caption = random.randint(0, 9)   
+        caption = torch.tensor(caption, dtype=torch.int64)
+        latent = torch.rand_like(torch.Tensor(1,100))
+        fake_images = generator(latent,caption)
+        
+        
+        for i in range(len(imgs[:,0,0,0])):
+            
+            caption = random.randint(0, 9)   
+            caption = torch.tensor(caption, dtype=torch.int64)
+            latent = torch.rand_like(torch.Tensor(1,100))
+            
+
+            
+            fake_image = generator(latent,caption)
+            fake_images = torch.cat((fake_images, fake_image), 0)
+
+        break
+    
+    fake_images = fake_images[:2000,:,:,:]
+
+#%%
+from collections import OrderedDict
+
+def eval_step(engine, batch):
+    return batch
+
+default_evaluator = Engine(eval_step)
+
+# create default optimizer for doctests
+
+param_tensor = torch.zeros([1], requires_grad=True)
+default_optimizer = torch.optim.SGD([param_tensor], lr=0.1)
+
+def get_default_trainer():
+
+    def train_step(engine, batch):
+        return batch
+
+    return Engine(train_step)
+
+default_model = nn.Sequential(OrderedDict([
+    ('base', nn.Linear(28, 2)),
+    ('fc', nn.Linear(2, 1))
+]))
+
+manual_seed(666)
+
+metric = FID(num_features=1, feature_extractor=default_model)
+metric.attach(default_evaluator, "fid")
+y_true = real_images[0][0]
+y_pred = fake_images[0][0]
+state = default_evaluator.run([[y_pred, y_true]])
+print("FID:",state.metrics["fid"])
