@@ -566,7 +566,7 @@ checkpoint = {GEN_STATE_DICT : generator.state_dict(),
 save_checkpoint(checkpoint, "cond_gan_pytorch14.pth.tar")
 
 # %%  Load Model
-load_checkpoint(torch.load("cond_gan_pytorch14.pth.tar",map_location=(device)))
+load_checkpoint(torch.load("cond_gan_pytorch11-3.pth.tar",map_location=(device)))
 
 
 # %%

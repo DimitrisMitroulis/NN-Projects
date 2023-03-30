@@ -55,7 +55,7 @@ D_LOSSES = "d_losses"
 SHUFFLE = True
 PIN_MEMORY = True
 NUM_WORKERS = 0
-BATCH_SIZE = 2000
+BATCH_SIZE = 128
 
 specific_latent = torch.tensor([[0.7628, 0.1779, 0.3978, 0.3606, 0.6387,
          0.3044, 0.8340, 0.3884, 0.9313, 0.5635, 0.1994, 0.6934, 0.5326,
@@ -200,9 +200,9 @@ train_loader = data.DataLoader(
 
 test_loader = data.DataLoader(
                                 test_dataset,
-                                batch_size=32,
+                                batch_size=BATCH_SIZE,
                                 shuffle=True,
-                                num_workers=0
+                                pin_memory=False
                                 )
 
 example_loader = data.DataLoader(
@@ -296,7 +296,7 @@ class Generator(nn.Module):
     
 #%% Loss fucntion, optimizers
 loss_func = nn.BCELoss()
-d_loss_func = nn.BCELoss()
+recon_loss = nn.MSELoss()
 
 # Initialize generator and discriminator
 generator = Generator().to(device)
@@ -321,6 +321,10 @@ if torch.cuda.is_available():
 img_list = []
 G_losses = []
 D_losses = []
+rec_losses = []
+g_bce_losses = []
+sf_losses = []
+sr_losses = []
 iters = 0
 
 if __name__ == '__main__':
@@ -336,9 +340,9 @@ if __name__ == '__main__':
             # Sample noise as generator input
             z = Variable(Tensor(np.random.normal(0, 1, (imgs.shape[0],LATENT_DIM))))
     
-            # transform to tensor [256,1,28,28]
+            # transform to tensor [batch_size,1,28,28]
             real_imgs = Variable(imgs.type(Tensor))
-            fake_labels = build_fake_labels(labels.to(device))
+            #fake_labels = build_fake_labels(labels.to(device))
             
             labels = labels.to(device)
             
@@ -360,9 +364,11 @@ if __name__ == '__main__':
             s_f = discriminator(gen_imgs.detach(),labels.detach())
             sf_loss = loss_func(s_f, fake)
             sf_loss.backward()
+            
             D_G_z1 = s_f.mean().item()
             
-            d_loss = s_f + s_r
+            d_loss = (sf_loss + sr_loss)/2
+            #d_loss.backward()
             optimizer_D.step()
     
             
@@ -372,21 +378,37 @@ if __name__ == '__main__':
             optimizer_G.zero_grad()
             #Loss measures generator's ability to fool the discriminator
             s_f = discriminator(gen_imgs,labels)
-            g_loss = loss_func(s_f, valid)
-            g_loss.backward()
-            D_G_z2 = s_f.mean().item()
+            #g_recon_loss = recon_loss(gen_imgs,real_imgs)
+            #g_recon_loss.backward()
+            
+            
+            #s_f = discriminator(gen_imgs.detach(),labels.detach())
+            g_bce_loss = loss_func(s_f, valid)
+            g_bce_loss.backward()
+            
+            
+            rec_loss = 0#g_recon_loss.mean().item()
+            g_bce_loss = g_bce_loss.mean()
+            g_loss = (g_bce_loss)#+g_bce_loss)/2
+
             optimizer_G.step()
           
     
             
            # Output training stats
             if i % 50 == 0:
-                print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f tD(x): %.4f tD(G(z)): %.4f / %.4f'
-                      % (epoch, NUM_EPOCHS, i, len(train_loader),d_loss[0].item(), g_loss.item(), D_x, D_G_z1, D_G_z2))
+                print('[%d/%d] Loss_D: %.4f\tLoss_G: %.4f (%.4f/%.4f)tD(x): %.4f tD(G(z)): %.4f'
+                      % (epoch, NUM_EPOCHS, d_loss.item(), g_loss, g_bce_loss, rec_loss, D_x, D_G_z1  ))
     
             # Save Losses for plotting later
             G_losses.append(g_loss.item())
-            D_losses.append(d_loss[0].item())
+            D_losses.append(d_loss.item())
+            rec_losses.append(rec_losses)
+            g_bce_losses.append(g_bce_loss)
+            
+            sf_losses.append(D_G_z1)
+            sr_losses.append(D_x)
+            
     
             # Check how the generator is doing by saving G's output on fixed_noise
             if (iters % 500 == 0) or ((epoch == NUM_EPOCHS-1) and (i == len(train_loader)-1)):
@@ -405,13 +427,30 @@ if __name__ == '__main__':
 
 plt.figure(figsize=(11,5))
 plt.title("Generator and Discriminator Loss During Training")
-plt.plot(G_losses,label="G")
-plt.plot(D_losses,label="D")
+plt.plot(G_losses[:], label="G_losses")
+plt.plot(D_losses[:], label="D_losses")
+
+
 plt.xlabel("iterations")
 plt.ylabel("Loss")
 plt.legend()
 plt.show()
     
+
+#plt.plot(sampled_list[:], label="sampled")
+
+
+#plt.plot(sf_losses[:], label="real_losses")
+#plt.plot(sr_losses[:], label="fake_losses")
+#plt.plot(wr_losses[:], label="wr_losses")
+
+#plt.plot(gen_losses[:], label="gen_losses")
+#plt.plot(int_losses[:], label="int_losses")
+
+
+
+
+
 # %% Save Model
 checkpoint = {GEN_STATE_DICT : generator.state_dict(), 
               GEN_OPTIMIZER : optimizer_G.state_dict(),
@@ -524,7 +563,8 @@ with torch.no_grad():
     discriminator.to('cpu')
     
     for i, (imgs,_) in enumerate(train_loader):
-        #real_images = imgs
+        real_images = imgs
+        
         
         caption = random.randint(0, 9)   
         caption = torch.tensor(caption, dtype=torch.int64)
@@ -545,60 +585,75 @@ with torch.no_grad():
 
         break
     
-    fake_images = fake_images[:2000,:,:,:]
+    fake_images = fake_images[:BATCH_SIZE,:,:,:]
     
-    #real_images = real_images[:2000,:,:,:]
+    #real_images = real_images[:1,:,:,:]
+
 
 #%%
+
+criterion = nn.MSELoss()
+recon_loss = criterion(fake_images,real_images)
+print(recon_loss)
+
+#%%
+
+f, axarr = plt.subplots(1)
+axarr.imshow(real_imgs[1][0].cpu().detach().numpy())
+print(labelsp[0].item())
+
+
+#%% 
 from torchvision.models import inception_v3
-import torch
-from torchvision.datasets import MNIST
-from torchvision.transforms import ToTensor, Normalize
-from torch.utils.data import DataLoader
-from torchvision.models import inception_v3
-from scipy import linalg
-import numpy as np
+from scipy.stats import entropy
 
-fake_images = torch.cat([fake_images, fake_images, fake_images], dim=1)
-fake_images = transforms.Compose([
-    transforms.Resize((299, 299)),
-    transforms.Grayscale(num_output_channels=3),
-])(fake_images)
+with torch.no_grad():
+    images = fake_images
+    batch_size = BATCH_SIZE
+    resize=True
+    
+    # Load pre-trained Inception-v3 model
+    model = inception_v3(pretrained=True, transform_input=False).to(device)
+    model.eval()
+    model.requires_grad_ = False
 
-
-
-# load a pre-trained Inception-v3 model
-inception_model = inception_v3(pretrained=True, aux_logits=True,)
-inception_model.to(device)
-inception_model.eval()
-
-# compute the feature representations of the real and fake images
-real_features = []
-fake_features = []
-for batch in train_loader:
-    images, _ = batch
-    images = images.to(device)
-    with torch.no_grad():
+    
+    # Prepare the images
+    transform = transforms.Compose([
+        transforms.Resize((299, 299)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
+    if resize:
         images = torch.cat([images,images,images],dim=1)
         images = transforms.Compose([
             transforms.Resize((299, 299)),
             transforms.Grayscale(num_output_channels=3),
         ])(images)
-        
-        features = inception_model(images)[0].view(images.size(0), -1)
-    real_features.append(features.cpu().numpy())
-with torch.no_grad():
-    features = inception_model(fake_images)[0].view(fake_images.size(0), -1)
-fake_features.append(features.cpu().numpy())
-
-# calculate the mean and covariance of the feature representations
-real_features = np.concatenate(real_features, axis=0)
-fake_features = np.concatenate(fake_features, axis=0)
-mu1, sigma1 = np.mean(real_features, axis=0), np.cov(real_features, rowvar=False)
-mu2, sigma2 = np.mean(fake_features, axis=0), np.cov(fake_features, rowvar=False)
-
-# calculate the FID score
-mu_diff = mu1 - mu2
-sigma_diff_sqrt = linalg.sqrtm(sigma1 @ sigma2)
-fid_score = np.real(np.trace(sigma1 + sigma2 - 2*sigma_diff_sqrt)) + np.dot(mu_diff, mu_diff)
-print(f'FID score: {fid_score:.2f}')
+    else:
+        images = [torch.from_numpy(image.transpose(2, 0, 1)).float().div(255).unsqueeze(0) for image in images]
+    
+    # Compute the predictions
+    n_images = images.shape[0]
+    n_batches = int(np.ceil(n_images / batch_size))
+    preds = []
+    with torch.no_grad():
+        for i in range(n_batches):
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, n_images)
+            batch = images.to(device)
+            #batch = torch.cat(images[start_idx:end_idx], dim=0).to(device)
+            pred = model(batch.detach())
+            pred = F.softmax(pred, dim=1).cpu().numpy()
+            preds.append(pred)
+    preds = np.concatenate(preds, axis=0)
+    
+    # Compute the Inception Score
+    scores = []
+    for i in range(preds.shape[0]):
+        p_yx = preds[i]
+        p_y = np.expand_dims(np.mean(p_yx, axis=0), axis=0)
+        scores.append(entropy(p_yx.T, p_y.T))
+    kl_divergence = np.mean(scores)
+    entropy_y = entropy(np.mean(preds, axis=0))
+    inception_score = np.exp(kl_divergence - entropy_y)
