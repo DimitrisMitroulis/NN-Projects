@@ -657,3 +657,4 @@ with torch.no_grad():
     kl_divergence = np.mean(scores)
     entropy_y = entropy(np.mean(preds, axis=0))
     inception_score = np.exp(kl_divergence - entropy_y)
+    print(inception_score)
