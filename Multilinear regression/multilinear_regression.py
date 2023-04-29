@@ -2,7 +2,10 @@ import pandas as pd
 import numpy as np
 import torch
 
+
 # %% Import and read data
+# get wines data from https://www.kaggle.com/datasets/uciml/red-wine-quality-cortez-et-al-2009
+
 df = pd.read_excel('wines.xlsx')
 data = df.to_numpy()
 wines = torch.from_numpy(data)
@@ -18,16 +21,15 @@ y = wines[:10,11]
 betas = []
 y_mean =  y.mean()
 
-for i in range(len(x[0,:])): 
+for i in range(len(x[0, :])): 
     num = 0
     denom = 0
     for j in range(len(x[:])):
-        x_diff = (x[j][i] - torch.mean(x[:,i]))
+        x_diff = (x[j][i] - torch.mean(x[:, i]))
         y_diff = (y[j] - y_mean)
-        num +=  x_diff * y_diff 
+        num +=  x_diff * y_diff
         denom += x_diff**2
-    betas.append(num/denom)
-# fox is wrong?    
+    betas.append(num/denom)   
 
 # %% Calculate b_0
 sum = 0
