@@ -2,7 +2,7 @@
 """
 Created on Tue Apr 25 14:14:50 2023
 
-@author: DIMITRIS
+@author: Dimitris MItroulis
 """
 
 # %% Import and stuff
